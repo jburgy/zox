@@ -16,6 +16,12 @@ pub const Token = struct {
         RIGHT_PAREN,
         LEFT_BRACE,
         RIGHT_BRACE,
+        COMMA,
+        DOT,
+        MINUS,
+        PLUS,
+        SEMICOLON,
+        STAR,
     };
 };
 
@@ -40,31 +46,23 @@ pub const Tokenizer = struct {
                 .end = undefined,
             },
         };
-        const tag: Token.Tag = blk: while (self.index < self.buffer.len) : (self.index += 1) {
+        const tag: Token.Tag = blk: while (self.index < self.buffer.len) {
             const c = self.buffer[self.index];
+            self.index += 1;
             switch (.start) {
                 .start => switch (c) {
-                    ' ', '\n', '\t', '\r' => result.loc.start = self.index + 1,
-                    '(' => {
-                        self.index += 1;
-                        break :blk .LEFT_PAREN;
-                    },
-                    ')' => {
-                        self.index += 1;
-                        break :blk .RIGHT_PAREN;
-                    },
-                    '{' => {
-                        self.index += 1;
-                        break :blk .LEFT_BRACE;
-                    },
-                    '}' => {
-                        self.index += 1;
-                        break :blk .RIGHT_BRACE;
-                    },
-                    else => {
-                        self.index += 1;
-                        break :blk .INVALID;
-                    },
+                    ' ', '\n', '\t', '\r' => result.loc.start = self.index,
+                    '(' => break :blk .LEFT_PAREN,
+                    ')' => break :blk .RIGHT_PAREN,
+                    '{' => break :blk .LEFT_BRACE,
+                    '}' => break :blk .RIGHT_BRACE,
+                    ',' => break :blk .COMMA,
+                    '.' => break :blk .DOT,
+                    '-' => break :blk .MINUS,
+                    '+' => break :blk .PLUS,
+                    ';' => break :blk .SEMICOLON,
+                    '*' => break :blk .STAR,
+                    else => break :blk .INVALID,
                 },
                 else => break,
             }
