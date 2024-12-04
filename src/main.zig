@@ -33,9 +33,9 @@ pub fn main() !void {
         var lexical_error = false;
         scan: while (true) {
             const token = tokenizer.next();
-            try tokenizer.dump(token);
+            if (try tokenizer.dump(token))
+                lexical_error = true;
             switch (token.tag) {
-                .INVALID => lexical_error = true,
                 .EOF => break :scan,
                 else => {},
             }
