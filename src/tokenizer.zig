@@ -80,10 +80,7 @@ pub const Tokenizer = struct {
                     '+' => break :blk .PLUS,
                     ';' => break :blk .SEMICOLON,
                     '*' => break :blk .STAR,
-                    '=' => {
-                        state = .equal;
-                        continue;
-                    },
+                    '=' => state = .equal,
                     else => break :blk .INVALID,
                 },
                 .equal => switch (c) {
