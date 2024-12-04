@@ -1,5 +1,8 @@
 const std = @import("std");
 
+const stdout = std.io.getStdOut().writer();
+const stderr = std.io.getStdErr().writer();
+
 pub const Token = struct {
     tag: Tag,
     loc: Loc,
@@ -28,6 +31,17 @@ pub const Token = struct {
 pub const Tokenizer = struct {
     buffer: []const u8,
     index: usize,
+
+    pub fn dump(self: *Tokenizer, token: Token) !void {
+        const src = self.buffer[token.loc.start..token.loc.end];
+
+        return if (token.tag == .INVALID) {
+            const line = std.mem.count(u8, self.buffer[0..token.loc.end], "\n");
+            try stderr.print("[line {d}] Error: Unexpected character: {s} null\n", .{ line + 1, src });
+        } else {
+            try stdout.print("{s} {s} null\n", .{ @tagName(token.tag), src });
+        };
+    }
 
     pub fn init(buffer: []const u8) Tokenizer {
         return .{ .buffer = buffer, .index = 0 };

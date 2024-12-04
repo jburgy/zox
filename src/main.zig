@@ -23,20 +23,26 @@ pub fn main() !void {
         std.process.exit(1);
     }
 
-    const file_contents = try std.fs.cwd().readFileAlloc(std.heap.page_allocator, filename, std.math.maxInt(usize));
-    defer std.heap.page_allocator.free(file_contents);
+    const allocator = std.heap.page_allocator;
+    const file_contents = try std.fs.cwd().readFileAlloc(allocator, filename, std.math.maxInt(usize));
+    defer allocator.free(file_contents);
 
     // Uncomment this block to pass the first stage
     if (file_contents.len > 0) {
         var tokenizer = Tokenizer.init(file_contents);
-        while (true) {
+        var lexical_error = false;
+        scan: while (true) {
             const token = tokenizer.next();
-            try stdout.print("{s} {s} null\n", .{
-                @tagName(token.tag),
-                file_contents[token.loc.start..token.loc.end],
-            });
-            if (token.tag == .EOF)
-                break;
+            try tokenizer.dump(token);
+            switch (token.tag) {
+                .INVALID => lexical_error = true,
+                .EOF => break :scan,
+                else => {},
+            }
+        }
+        if (lexical_error) {
+            allocator.free(file_contents);
+            std.process.exit(65);
         }
     } else {
         try stdout.print("EOF  null\n", .{}); // Placeholder, remove this line when implementing the scanner
