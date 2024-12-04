@@ -25,6 +25,8 @@ pub const Token = struct {
         PLUS,
         SEMICOLON,
         STAR,
+        EQUAL,
+        EQUAL_EQUAL,
     };
 };
 
@@ -49,10 +51,12 @@ pub const Tokenizer = struct {
 
     const State = enum {
         start,
+        equal,
         invalid,
     };
 
     pub fn next(self: *Tokenizer) Token {
+        var state: State = .start;
         var result: Token = .{
             .tag = undefined,
             .loc = .{
@@ -63,7 +67,7 @@ pub const Tokenizer = struct {
         const tag: Token.Tag = blk: while (self.index < self.buffer.len) {
             const c = self.buffer[self.index];
             self.index += 1;
-            switch (.start) {
+            switch (state) {
                 .start => switch (c) {
                     ' ', '\n', '\t', '\r' => result.loc.start = self.index,
                     '(' => break :blk .LEFT_PAREN,
@@ -76,9 +80,20 @@ pub const Tokenizer = struct {
                     '+' => break :blk .PLUS,
                     ';' => break :blk .SEMICOLON,
                     '*' => break :blk .STAR,
+                    '=' => {
+                        state = .equal;
+                        continue;
+                    },
                     else => break :blk .INVALID,
                 },
-                else => break,
+                .equal => switch (c) {
+                    '=' => break :blk .EQUAL_EQUAL,
+                    else => {
+                        self.index -= 1;
+                        break :blk .EQUAL;
+                    },
+                },
+                else => break :blk .INVALID,
             }
         } else .EOF;
         result.tag = tag;
