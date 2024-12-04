@@ -34,6 +34,7 @@ pub const Token = struct {
         GREATER,
         GREATER_EQUAL,
         SLASH,
+        STRING,
     };
 };
 
@@ -41,15 +42,27 @@ pub const Tokenizer = struct {
     buffer: []const u8,
     index: usize,
 
-    pub fn dump(self: *Tokenizer, token: Token) !void {
+    pub fn dump(self: *Tokenizer, token: Token) !bool {
         const src = self.buffer[token.loc.start..token.loc.end];
+        var lexical_error = false;
 
-        return if (token.tag == .INVALID) {
+        if (token.tag == .INVALID) {
             const line = std.mem.count(u8, self.buffer[0..token.loc.end], "\n");
             try stderr.print("[line {d}] Error: Unexpected character: {s}\n", .{ line + 1, src });
+            lexical_error = true;
+        } else if (token.tag == .STRING) {
+            const valid = self.buffer[token.loc.end - 1] == '"';
+            if (valid) {
+                try stdout.print("{s} {s} {s}\n", .{ @tagName(token.tag), src, src[1 .. src.len - 1] });
+            } else {
+                const line = std.mem.count(u8, self.buffer[0..token.loc.end], "\n");
+                try stderr.print("[line {d}] Error: Unterminated string.\n", .{line + 1});
+                lexical_error = true;
+            }
         } else {
             try stdout.print("{s} {s} null\n", .{ @tagName(token.tag), src });
-        };
+        }
+        return lexical_error;
     }
 
     pub fn init(buffer: []const u8) Tokenizer {
@@ -64,6 +77,7 @@ pub const Tokenizer = struct {
         greater,
         slash,
         comment,
+        string,
         invalid,
     };
 
@@ -97,6 +111,7 @@ pub const Tokenizer = struct {
                     '<' => state = .less,
                     '>' => state = .greater,
                     '/' => state = .slash,
+                    '"' => state = .string,
                     else => break :blk .INVALID,
                 },
                 .equal => switch (c) {
@@ -141,6 +156,10 @@ pub const Tokenizer = struct {
                         else => {},
                     }
                 },
+                .string => switch (c) {
+                    '"' => break :blk .STRING,
+                    else => {},
+                },
                 else => break :blk .INVALID,
             }
         } else {
@@ -150,6 +169,7 @@ pub const Tokenizer = struct {
                 .less => .LESS,
                 .greater => .GREATER,
                 .slash => .SLASH,
+                .string => .STRING,
                 else => .EOF,
             };
         };
