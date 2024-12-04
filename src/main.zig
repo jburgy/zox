@@ -24,9 +24,9 @@ pub fn main() !void {
     defer std.heap.page_allocator.free(file_contents);
 
     // Uncomment this block to pass the first stage
-    // if (file_contents.len > 0) {
-    //     @panic("Scanner not implemented");
-    // } else {
-    //     try std.io.getStdOut().writer().print("EOF  null\n", .{}); // Placeholder, remove this line when implementing the scanner
-    // }
+    if (file_contents.len > 0) {
+        @panic("Scanner not implemented");
+    } else {
+        try std.io.getStdOut().writer().print("EOF  null\n", .{}); // Placeholder, remove this line when implementing the scanner
+    }
 }
