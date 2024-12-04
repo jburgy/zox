@@ -14,6 +14,8 @@ pub const Token = struct {
         EOF,
         LEFT_PAREN,
         RIGHT_PAREN,
+        LEFT_BRACE,
+        RIGHT_BRACE,
     };
 };
 
@@ -50,6 +52,14 @@ pub const Tokenizer = struct {
                     ')' => {
                         self.index += 1;
                         break :blk .RIGHT_PAREN;
+                    },
+                    '{' => {
+                        self.index += 1;
+                        break :blk .LEFT_BRACE;
+                    },
+                    '}' => {
+                        self.index += 1;
+                        break :blk .RIGHT_BRACE;
                     },
                     else => {
                         self.index += 1;
