@@ -27,6 +27,8 @@ pub const Token = struct {
         STAR,
         EQUAL,
         EQUAL_EQUAL,
+        BANG,
+        BANG_EQUAL,
     };
 };
 
@@ -52,6 +54,7 @@ pub const Tokenizer = struct {
     const State = enum {
         start,
         equal,
+        bang,
         invalid,
     };
 
@@ -81,6 +84,7 @@ pub const Tokenizer = struct {
                     ';' => break :blk .SEMICOLON,
                     '*' => break :blk .STAR,
                     '=' => state = .equal,
+                    '!' => state = .bang,
                     else => break :blk .INVALID,
                 },
                 .equal => switch (c) {
@@ -90,11 +94,19 @@ pub const Tokenizer = struct {
                         break :blk .EQUAL;
                     },
                 },
+                .bang => switch (c) {
+                    '=' => break :blk .BANG_EQUAL,
+                    else => {
+                        self.index -= 1;
+                        break :blk .BANG;
+                    },
+                },
                 else => break :blk .INVALID,
             }
         } else {
             break :blk switch (state) {
                 .equal => .EQUAL,
+                .bang => .BANG,
                 else => .EOF,
             };
         };
