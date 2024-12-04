@@ -92,7 +92,12 @@ pub const Tokenizer = struct {
                 },
                 else => break :blk .INVALID,
             }
-        } else .EOF;
+        } else {
+            break :blk switch (state) {
+                .equal => .EQUAL,
+                else => .EOF,
+            };
+        };
         result.tag = tag;
         result.loc.end = self.index;
         return result;
