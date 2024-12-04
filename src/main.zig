@@ -1,4 +1,7 @@
 const std = @import("std");
+const Tokenizer = @import("tokenizer.zig").Tokenizer;
+
+const stdout = std.io.getStdOut().writer();
 
 pub fn main() !void {
     // You can use print statements as follows for debugging, they'll be visible when running tests.
@@ -25,8 +28,17 @@ pub fn main() !void {
 
     // Uncomment this block to pass the first stage
     if (file_contents.len > 0) {
-        @panic("Scanner not implemented");
+        var tokenizer = Tokenizer.init(file_contents);
+        while (true) {
+            const token = tokenizer.next();
+            try stdout.print("{s} {s} null\n", .{
+                @tagName(token.tag),
+                file_contents[token.loc.start..token.loc.end],
+            });
+            if (token.tag == .EOF)
+                break;
+        }
     } else {
-        try std.io.getStdOut().writer().print("EOF  null\n", .{}); // Placeholder, remove this line when implementing the scanner
+        try stdout.print("EOF  null\n", .{}); // Placeholder, remove this line when implementing the scanner
     }
 }
