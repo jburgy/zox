@@ -37,7 +37,7 @@ pub const Tokenizer = struct {
 
         return if (token.tag == .INVALID) {
             const line = std.mem.count(u8, self.buffer[0..token.loc.end], "\n");
-            try stderr.print("[line {d}] Error: Unexpected character: {s} null\n", .{ line + 1, src });
+            try stderr.print("[line {d}] Error: Unexpected character: {s}\n", .{ line + 1, src });
         } else {
             try stdout.print("{s} {s} null\n", .{ @tagName(token.tag), src });
         };
