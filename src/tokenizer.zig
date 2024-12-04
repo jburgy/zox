@@ -29,6 +29,10 @@ pub const Token = struct {
         EQUAL_EQUAL,
         BANG,
         BANG_EQUAL,
+        LESS,
+        LESS_EQUAL,
+        GREATER,
+        GREATER_EQUAL,
     };
 };
 
@@ -55,6 +59,8 @@ pub const Tokenizer = struct {
         start,
         equal,
         bang,
+        less,
+        greater,
         invalid,
     };
 
@@ -85,6 +91,8 @@ pub const Tokenizer = struct {
                     '*' => break :blk .STAR,
                     '=' => state = .equal,
                     '!' => state = .bang,
+                    '<' => state = .less,
+                    '>' => state = .greater,
                     else => break :blk .INVALID,
                 },
                 .equal => switch (c) {
@@ -99,6 +107,20 @@ pub const Tokenizer = struct {
                     else => {
                         self.index -= 1;
                         break :blk .BANG;
+                    },
+                },
+                .less => switch (c) {
+                    '=' => break :blk .LESS_EQUAL,
+                    else => {
+                        self.index -= 1;
+                        break :blk .LESS;
+                    },
+                },
+                .greater => switch (c) {
+                    '=' => break :blk .GREATER_EQUAL,
+                    else => {
+                        self.index -= 1;
+                        break :blk .GREATER;
                     },
                 },
                 else => break :blk .INVALID,
