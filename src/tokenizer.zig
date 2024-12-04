@@ -134,9 +134,12 @@ pub const Tokenizer = struct {
                         break :blk .SLASH;
                     },
                 },
-                .comment => switch (c) {
-                    '\n' => state = .start,
-                    else => result.loc.start = self.index,
+                .comment => {
+                    result.loc.start = self.index;
+                    switch (c) {
+                        '\n' => state = .start,
+                        else => {},
+                    }
                 },
                 else => break :blk .INVALID,
             }
