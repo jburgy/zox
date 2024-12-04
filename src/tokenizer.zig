@@ -33,6 +33,7 @@ pub const Token = struct {
         LESS_EQUAL,
         GREATER,
         GREATER_EQUAL,
+        SLASH,
     };
 };
 
@@ -61,6 +62,8 @@ pub const Tokenizer = struct {
         bang,
         less,
         greater,
+        slash,
+        comment,
         invalid,
     };
 
@@ -93,6 +96,7 @@ pub const Tokenizer = struct {
                     '!' => state = .bang,
                     '<' => state = .less,
                     '>' => state = .greater,
+                    '/' => state = .slash,
                     else => break :blk .INVALID,
                 },
                 .equal => switch (c) {
@@ -123,12 +127,26 @@ pub const Tokenizer = struct {
                         break :blk .GREATER;
                     },
                 },
+                .slash => switch (c) {
+                    '/' => state = .comment,
+                    else => {
+                        self.index -= 1;
+                        break :blk .SLASH;
+                    },
+                },
+                .comment => switch (c) {
+                    '\n' => state = .start,
+                    else => result.loc.start = self.index,
+                },
                 else => break :blk .INVALID,
             }
         } else {
             break :blk switch (state) {
                 .equal => .EQUAL,
                 .bang => .BANG,
+                .less => .LESS,
+                .greater => .GREATER,
+                .slash => .SLASH,
                 else => .EOF,
             };
         };
