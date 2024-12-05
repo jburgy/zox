@@ -37,7 +37,48 @@ pub const Token = struct {
         STRING,
         NUMBER,
         IDENTIFIER,
+        AND,
+        CLASS,
+        ELSE,
+        FALSE,
+        FOR,
+        FUN,
+        IF,
+        NIL,
+        OR,
+        PRINT,
+        RETURN,
+        SUPER,
+        THIS,
+        TRUE,
+        VAR,
+        WHILE,
     };
+
+    const KV = struct { []const u8, Tag };
+    const keywords = [_]KV{
+        .{ "and", .AND },
+        .{ "class", .CLASS },
+        .{ "else", .ELSE },
+        .{ "false", .FALSE },
+        .{ "for", .FOR },
+        .{ "fun", .FUN },
+        .{ "if", .IF },
+        .{ "nil", .NIL },
+        .{ "or", .OR },
+        .{ "print", .PRINT },
+        .{ "return", .RETURN },
+        .{ "super", .SUPER },
+        .{ "this", .THIS },
+        .{ "true", .TRUE },
+        .{ "var", .VAR },
+        .{ "while", .WHILE },
+    };
+    const reserved = std.StaticStringMap(Tag).initComptime(keywords);
+
+    fn maybeReserved(name: []const u8) ?Tag {
+        return reserved.get(name);
+    }
 };
 
 pub const Tokenizer = struct {
@@ -82,6 +123,10 @@ pub const Tokenizer = struct {
         return .{ .buffer = buffer, .index = 0 };
     }
 
+    fn maybeReserved(self: *Tokenizer, start: usize) Token.Tag {
+        return Token.maybeReserved(self.buffer[start..self.index]) orelse .IDENTIFIER;
+    }
+
     const State = enum {
         start,
         equal,
@@ -98,20 +143,14 @@ pub const Tokenizer = struct {
     };
 
     pub fn next(self: *Tokenizer) Token {
+        var start = self.index;
         var state: State = .start;
-        var result: Token = .{
-            .tag = undefined,
-            .loc = .{
-                .start = self.index,
-                .end = undefined,
-            },
-        };
         const tag: Token.Tag = blk: while (self.index < self.buffer.len) {
             const c = self.buffer[self.index];
             self.index += 1;
             switch (state) {
                 .start => switch (c) {
-                    ' ', '\n', '\t', '\r' => result.loc.start = self.index,
+                    ' ', '\n', '\t', '\r' => start = self.index,
                     '(' => break :blk .LEFT_PAREN,
                     ')' => break :blk .RIGHT_PAREN,
                     '{' => break :blk .LEFT_BRACE,
@@ -168,7 +207,7 @@ pub const Tokenizer = struct {
                     },
                 },
                 .comment => {
-                    result.loc.start = self.index;
+                    start = self.index;
                     switch (c) {
                         '\n' => state = .start,
                         else => {},
@@ -197,7 +236,7 @@ pub const Tokenizer = struct {
                     '0'...'9', 'A'...'Z', '_', 'a'...'z' => {},
                     else => {
                         self.index -= 1;
-                        break :blk .IDENTIFIER;
+                        break :blk self.maybeReserved(start);
                     },
                 },
                 else => break :blk .INVALID,
@@ -212,12 +251,10 @@ pub const Tokenizer = struct {
                 .string => .STRING,
                 .number => .NUMBER,
                 .fractional_number => .NUMBER,
-                .identifier => .IDENTIFIER,
+                .identifier => self.maybeReserved(start),
                 else => .EOF,
             };
         };
-        result.tag = tag;
-        result.loc.end = self.index;
-        return result;
+        return .{ .tag = tag, .loc = .{ .start = start, .end = self.index } };
     }
 };
