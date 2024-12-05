@@ -35,6 +35,7 @@ pub const Token = struct {
         GREATER_EQUAL,
         SLASH,
         STRING,
+        NUMBER,
     };
 };
 
@@ -46,21 +47,29 @@ pub const Tokenizer = struct {
         const src = self.buffer[token.loc.start..token.loc.end];
         var lexical_error = false;
 
-        if (token.tag == .INVALID) {
-            const line = std.mem.count(u8, self.buffer[0..token.loc.end], "\n");
-            try stderr.print("[line {d}] Error: Unexpected character: {s}\n", .{ line + 1, src });
-            lexical_error = true;
-        } else if (token.tag == .STRING) {
-            const valid = self.buffer[token.loc.end - 1] == '"';
-            if (valid) {
-                try stdout.print("{s} {s} {s}\n", .{ @tagName(token.tag), src, src[1 .. src.len - 1] });
-            } else {
+        switch (token.tag) {
+            .INVALID => {
                 const line = std.mem.count(u8, self.buffer[0..token.loc.end], "\n");
-                try stderr.print("[line {d}] Error: Unterminated string.\n", .{line + 1});
+                try stderr.print("[line {d}] Error: Unexpected character: {s}\n", .{ line + 1, src });
                 lexical_error = true;
-            }
-        } else {
-            try stdout.print("{s} {s} null\n", .{ @tagName(token.tag), src });
+            },
+            .STRING => {
+                const valid = self.buffer[token.loc.end - 1] == '"';
+                if (valid) {
+                    try stdout.print("{s} {s} {s}\n", .{ @tagName(token.tag), src, src[1 .. src.len - 1] });
+                } else {
+                    const line = std.mem.count(u8, self.buffer[0..token.loc.end], "\n");
+                    try stderr.print("[line {d}] Error: Unterminated string.\n", .{line + 1});
+                    lexical_error = true;
+                }
+            },
+            .NUMBER => try stdout.print("{s} {s} {s}{s}\n", .{
+                @tagName(token.tag),
+                src,
+                src,
+                if (std.mem.indexOfScalar(u8, src, '.') == null) ".0" else "",
+            }),
+            else => try stdout.print("{s} {s} null\n", .{ @tagName(token.tag), src }),
         }
         return lexical_error;
     }
@@ -78,6 +87,8 @@ pub const Tokenizer = struct {
         slash,
         comment,
         string,
+        number,
+        fractional_number,
         invalid,
     };
 
@@ -112,6 +123,7 @@ pub const Tokenizer = struct {
                     '>' => state = .greater,
                     '/' => state = .slash,
                     '"' => state = .string,
+                    '0'...'9' => state = .number,
                     else => break :blk .INVALID,
                 },
                 .equal => switch (c) {
@@ -160,6 +172,15 @@ pub const Tokenizer = struct {
                     '"' => break :blk .STRING,
                     else => {},
                 },
+                .number => switch (c) {
+                    '0'...'9' => {},
+                    '.' => state = .fractional_number,
+                    else => break :blk .NUMBER,
+                },
+                .fractional_number => switch (c) {
+                    '0'...'9' => {},
+                    else => break :blk .NUMBER,
+                },
                 else => break :blk .INVALID,
             }
         } else {
@@ -170,6 +191,8 @@ pub const Tokenizer = struct {
                 .greater => .GREATER,
                 .slash => .SLASH,
                 .string => .STRING,
+                .number => .NUMBER,
+                .fractional_number => .NUMBER,
                 else => .EOF,
             };
         };
