@@ -36,6 +36,7 @@ pub const Token = struct {
         SLASH,
         STRING,
         NUMBER,
+        IDENTIFIER,
     };
 };
 
@@ -92,6 +93,7 @@ pub const Tokenizer = struct {
         string,
         number,
         fractional_number,
+        identifier,
         invalid,
     };
 
@@ -127,6 +129,7 @@ pub const Tokenizer = struct {
                     '/' => state = .slash,
                     '"' => state = .string,
                     '0'...'9' => state = .number,
+                    'A'...'Z', '_', 'a'...'z' => state = .identifier,
                     else => break :blk .INVALID,
                 },
                 .equal => switch (c) {
@@ -190,6 +193,13 @@ pub const Tokenizer = struct {
                         break :blk .NUMBER;
                     },
                 },
+                .identifier => switch (c) {
+                    '0'...'9', 'A'...'Z', '_', 'a'...'z' => {},
+                    else => {
+                        self.index -= 1;
+                        break :blk .IDENTIFIER;
+                    },
+                },
                 else => break :blk .INVALID,
             }
         } else {
@@ -202,6 +212,7 @@ pub const Tokenizer = struct {
                 .string => .STRING,
                 .number => .NUMBER,
                 .fractional_number => .NUMBER,
+                .identifier => .IDENTIFIER,
                 else => .EOF,
             };
         };
