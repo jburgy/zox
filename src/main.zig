@@ -1,5 +1,6 @@
 const std = @import("std");
 const Tokenizer = @import("tokenizer.zig").Tokenizer;
+const Parser = @import("parser.zig").Parser;
 
 const stdout = std.io.getStdOut().writer();
 
@@ -17,8 +18,10 @@ pub fn main() !void {
 
     const command = args[1];
     const filename = args[2];
+    const tokenize = std.mem.eql(u8, command, "tokenize");
+    const parse = std.mem.eql(u8, command, "parse");
 
-    if (!std.mem.eql(u8, command, "tokenize")) {
+    if (!tokenize and !parse) {
         std.debug.print("Unknown command: {s}\n", .{command});
         std.process.exit(1);
     }
@@ -28,7 +31,7 @@ pub fn main() !void {
     defer allocator.free(file_contents);
 
     // Uncomment this block to pass the first stage
-    if (file_contents.len > 0) {
+    if (tokenize and file_contents.len > 0) {
         var tokenizer = Tokenizer.init(file_contents);
         var lexical_error = false;
         scan: while (true) {
@@ -44,6 +47,12 @@ pub fn main() !void {
             allocator.free(file_contents);
             std.process.exit(65);
         }
+    } else if (parse and file_contents.len > 0) {
+        var tokens = Tokenizer.init(file_contents);
+        var parser = Parser.init(allocator, &tokens);
+        var expr = try parser.expression();
+
+        try expr.emit(file_contents, stdout);
     } else {
         try stdout.print("EOF  null\n", .{}); // Placeholder, remove this line when implementing the scanner
     }
