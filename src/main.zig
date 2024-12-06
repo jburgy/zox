@@ -50,9 +50,21 @@ pub fn main() !void {
     } else if (parse and file_contents.len > 0) {
         var tokens = Tokenizer.init(file_contents);
         var parser = Parser.init(allocator, &tokens);
-        var expr = try parser.expression();
-
-        try expr.emit(file_contents, stdout);
+        if (parser.expression()) |expr| {
+            try expr.emit(file_contents, stdout);
+        } else |err| switch (err) {
+            error.UnexpectedToken => {
+                const token = parser.peek();
+                const line = std.mem.count(u8, file_contents[0..token.loc.end], "\n");
+                std.debug.print(
+                    "[Line {d}] Error at '{s}': Expect expression.",
+                    .{ line + 1, file_contents[token.loc.start..token.loc.end] },
+                );
+                allocator.free(file_contents);
+                std.process.exit(65);
+            },
+            else => unreachable,
+        }
     } else {
         try stdout.print("EOF  null\n", .{}); // Placeholder, remove this line when implementing the scanner
     }
