@@ -21,9 +21,8 @@ pub const Node = struct {
                 }
                 try writer.print("{d:.[1]}", .{ value, precision });
             },
-            .FALSE, .NIL, .TRUE => {
-                try writer.print("{s}", .{slice});
-            },
+            .STRING => try writer.print("{s}", .{slice[1 .. slice.len - 1]}),
+            .FALSE, .NIL, .TRUE => try writer.print("{s}", .{slice}),
             else => {
                 try writer.print("({s} ", .{slice});
                 try self.lhs.?.emit(src, writer);
@@ -91,7 +90,7 @@ pub const Parser = struct {
     fn factor(self: *Parser) error{OutOfMemory}!*Node {
         const token = self.peek();
         return switch (token.tag) {
-            .NUMBER, .FALSE, .NIL, .TRUE => try self.create(self.next(), null, null),
+            .STRING, .NUMBER, .FALSE, .NIL, .TRUE => try self.create(self.next(), null, null),
             .LEFT_PAREN => blk: {
                 _ = self.next();
                 const result = try self.expression();
