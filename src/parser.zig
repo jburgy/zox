@@ -71,11 +71,27 @@ pub const Parser = struct {
     }
 
     pub fn expression(self: *Parser) error{OutOfMemory}!*Node {
+        return self.equality();
+    }
+
+    pub fn equality(self: *Parser) error{OutOfMemory}!*Node {
+        var result = try self.comparison();
+        while (true) {
+            const token = self.peek();
+            result = switch (token.tag) {
+                .EQUAL_EQUAL, .BANG_EQUAL => try self.create(self.next(), result, try self.comparison()),
+                else => break,
+            };
+        }
+        return result;
+    }
+
+    pub fn comparison(self: *Parser) error{OutOfMemory}!*Node {
         var result = try self.term();
         while (true) {
             const token = self.peek();
             result = switch (token.tag) {
-                .MINUS, .PLUS => try self.create(self.next(), result, try self.term()),
+                .LESS, .LESS_EQUAL, .GREATER, .GREATER_EQUAL => try self.create(self.next(), result, try self.term()),
                 else => break,
             };
         }
@@ -87,7 +103,7 @@ pub const Parser = struct {
         while (true) {
             const token = self.peek();
             result = switch (token.tag) {
-                .STAR, .SLASH => try self.create(self.next(), result, try self.factor()),
+                .MINUS, .PLUS => try self.create(self.next(), result, try self.factor()),
                 else => break,
             };
         }
