@@ -12,6 +12,11 @@ pub const Node = struct {
     pub fn emit(self: @This(), src: []const u8, writer: anytype) !void {
         const slice = src[self.token.loc.start..self.token.loc.end];
         switch (self.token.tag) {
+            .LEFT_PAREN => {
+                try writer.print("(group ", .{});
+                try self.lhs.?.emit(src, writer);
+                try writer.print(")", .{});
+            },
             .NUMBER => {
                 const value = try std.fmt.parseFloat(f64, slice);
                 var precision: ?usize = 1;
@@ -92,8 +97,7 @@ pub const Parser = struct {
         return switch (token.tag) {
             .STRING, .NUMBER, .FALSE, .NIL, .TRUE => try self.create(self.next(), null, null),
             .LEFT_PAREN => blk: {
-                _ = self.next();
-                const result = try self.expression();
+                const result = try self.create(self.next(), try self.expression(), null);
                 assert(self.next().tag == .RIGHT_PAREN);
                 break :blk result;
             },
