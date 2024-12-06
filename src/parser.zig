@@ -21,7 +21,7 @@ pub const Node = struct {
                 }
                 try writer.print("{d:.[1]}", .{ value, precision });
             },
-            .STRING => try writer.print("{s}", .{slice[1 .. slice.len - 1]}),
+            .STRING => try writer.print("(group {s})", .{slice[1 .. slice.len - 1]}),
             .FALSE, .NIL, .TRUE => try writer.print("{s}", .{slice}),
             else => {
                 try writer.print("({s} ", .{slice});
