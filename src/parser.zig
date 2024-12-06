@@ -31,8 +31,10 @@ pub const Node = struct {
             else => {
                 try writer.print("({s} ", .{slice});
                 try self.lhs.?.emit(src, writer);
-                try writer.print(" ", .{});
-                try self.rhs.?.emit(src, writer);
+                if (self.rhs != null) {
+                    try writer.print(" ", .{});
+                    try self.rhs.?.emit(src, writer);
+                }
                 try writer.print(")", .{});
             },
         }
@@ -93,6 +95,26 @@ pub const Parser = struct {
     }
 
     fn factor(self: *Parser) error{OutOfMemory}!*Node {
+        var result = try self.unary();
+        while (true) {
+            const token = self.peek();
+            result = switch (token.tag) {
+                .STAR, .SLASH => try self.create(self.next(), result, try self.unary()),
+                else => break,
+            };
+        }
+        return result;
+    }
+
+    fn unary(self: *Parser) error{OutOfMemory}!*Node {
+        const token = self.peek();
+        return switch (token.tag) {
+            .BANG, .MINUS => self.create(self.next(), try self.unary(), null),
+            else => self.primary(),
+        };
+    }
+
+    fn primary(self: *Parser) error{OutOfMemory}!*Node {
         const token = self.peek();
         return switch (token.tag) {
             .STRING, .NUMBER, .FALSE, .NIL, .TRUE => try self.create(self.next(), null, null),
