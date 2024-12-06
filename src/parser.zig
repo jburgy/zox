@@ -9,6 +9,24 @@ const ParseError = error{
     UnexpectedToken,
 };
 
+const ValueType = enum {
+    nil,
+    bool,
+};
+
+const Value = union(ValueType) {
+    nil: void,
+    bool: bool,
+
+    pub fn format(value: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        try switch (value) {
+            .nil => writer.print("nil", .{}),
+            .bool => writer.print("{any}", .{value.bool}),
+            // else => unreachable,
+        };
+    }
+};
+
 pub const Node = struct {
     token: Token,
     lhs: ?*Node,
@@ -43,6 +61,15 @@ pub const Node = struct {
                 try writer.print(")", .{});
             },
         }
+    }
+
+    pub fn evaluate(self: @This()) Value {
+        return switch (self.token.tag) {
+            .FALSE => .{ .bool = false },
+            .NIL => .{ .nil = void{} },
+            .TRUE => .{ .bool = true },
+            else => unreachable,
+        };
     }
 };
 

@@ -20,8 +20,9 @@ pub fn main() !void {
     const filename = args[2];
     const tokenize = std.mem.eql(u8, command, "tokenize");
     const parse = std.mem.eql(u8, command, "parse");
+    const evaluate = std.mem.eql(u8, command, "evaluate");
 
-    if (!tokenize and !parse) {
+    if (!(tokenize or parse or evaluate)) {
         std.debug.print("Unknown command: {s}\n", .{command});
         std.process.exit(1);
     }
@@ -47,11 +48,14 @@ pub fn main() !void {
             allocator.free(file_contents);
             std.process.exit(65);
         }
-    } else if (parse and file_contents.len > 0) {
+    } else if ((parse or evaluate) and file_contents.len > 0) {
         var tokens = Tokenizer.init(file_contents);
         var parser = Parser.init(allocator, &tokens);
         if (parser.expression()) |expr| {
-            try expr.emit(file_contents, stdout);
+            if (evaluate)
+                try stdout.print("{any}", .{expr.evaluate()})
+            else
+                try expr.emit(file_contents, stdout);
         } else |err| switch (err) {
             error.UnexpectedToken => {
                 const token = parser.peek();
