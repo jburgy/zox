@@ -4,6 +4,11 @@ const tokenizer = @import("tokenizer.zig");
 const Token = tokenizer.Token;
 const Tokenizer = tokenizer.Tokenizer;
 
+const ParseError = error{
+    OutOfMemory,
+    UnexpectedToken,
+};
+
 pub const Node = struct {
     token: Token,
     lhs: ?*Node,
@@ -54,13 +59,13 @@ pub const Parser = struct {
         };
     }
 
-    fn create(self: @This(), token: Token, lhs: ?*Node, rhs: ?*Node) error{OutOfMemory}!*Node {
+    fn create(self: @This(), token: Token, lhs: ?*Node, rhs: ?*Node) ParseError!*Node {
         const node = try self.allocator.create(Node);
         node.* = .{ .token = token, .lhs = lhs, .rhs = rhs };
         return node;
     }
 
-    fn peek(self: *Parser) Token {
+    pub fn peek(self: *Parser) Token {
         return self.look_ahead;
     }
 
@@ -70,11 +75,11 @@ pub const Parser = struct {
         return token;
     }
 
-    pub fn expression(self: *Parser) error{OutOfMemory}!*Node {
+    pub fn expression(self: *Parser) ParseError!*Node {
         return self.equality();
     }
 
-    pub fn equality(self: *Parser) error{OutOfMemory}!*Node {
+    pub fn equality(self: *Parser) ParseError!*Node {
         var result = try self.comparison();
         while (true) {
             const token = self.peek();
@@ -86,7 +91,7 @@ pub const Parser = struct {
         return result;
     }
 
-    pub fn comparison(self: *Parser) error{OutOfMemory}!*Node {
+    pub fn comparison(self: *Parser) ParseError!*Node {
         var result = try self.term();
         while (true) {
             const token = self.peek();
@@ -98,7 +103,7 @@ pub const Parser = struct {
         return result;
     }
 
-    fn term(self: *Parser) error{OutOfMemory}!*Node {
+    fn term(self: *Parser) ParseError!*Node {
         var result = try self.factor();
         while (true) {
             const token = self.peek();
@@ -110,7 +115,7 @@ pub const Parser = struct {
         return result;
     }
 
-    fn factor(self: *Parser) error{OutOfMemory}!*Node {
+    fn factor(self: *Parser) ParseError!*Node {
         var result = try self.unary();
         while (true) {
             const token = self.peek();
@@ -122,7 +127,7 @@ pub const Parser = struct {
         return result;
     }
 
-    fn unary(self: *Parser) error{OutOfMemory}!*Node {
+    fn unary(self: *Parser) ParseError!*Node {
         const token = self.peek();
         return switch (token.tag) {
             .BANG, .MINUS => self.create(self.next(), try self.unary(), null),
@@ -130,16 +135,20 @@ pub const Parser = struct {
         };
     }
 
-    fn primary(self: *Parser) error{OutOfMemory}!*Node {
+    fn primary(self: *Parser) ParseError!*Node {
         const token = self.peek();
         return switch (token.tag) {
-            .STRING, .NUMBER, .FALSE, .NIL, .TRUE => try self.create(self.next(), null, null),
+            .STRING => switch (self.tokens.buffer[token.loc.end - 1]) {
+                '"' => try self.create(self.next(), null, null),
+                else => error.UnexpectedToken,
+            },
+            .NUMBER, .FALSE, .NIL, .TRUE => try self.create(self.next(), null, null),
             .LEFT_PAREN => blk: {
                 const result = try self.create(self.next(), try self.expression(), null);
                 assert(self.next().tag == .RIGHT_PAREN);
                 break :blk result;
             },
-            else => unreachable,
+            else => error.UnexpectedToken,
         };
     }
 };
