@@ -4,7 +4,7 @@ const Parser = @import("parser.zig").Parser;
 
 const stdout = std.io.getStdOut().writer();
 
-pub fn main() !void {
+pub fn main() !u8 {
     // You can use print statements as follows for debugging, they'll be visible when running tests.
     std.debug.print("Logs from your program will appear here!\n", .{});
 
@@ -31,6 +31,8 @@ pub fn main() !void {
     const file_contents = try std.fs.cwd().readFileAlloc(allocator, filename, std.math.maxInt(usize));
     defer allocator.free(file_contents);
 
+    var status: u8 = 0;
+
     // Uncomment this block to pass the first stage
     if (tokenize and file_contents.len > 0) {
         var tokenizer = Tokenizer.init(file_contents);
@@ -45,31 +47,43 @@ pub fn main() !void {
             }
         }
         if (lexical_error) {
-            allocator.free(file_contents);
-            std.process.exit(65);
+            status = 65;
         }
     } else if ((parse or evaluate) and file_contents.len > 0) {
         var tokens = Tokenizer.init(file_contents);
         var parser = Parser.init(allocator, &tokens);
         if (parser.expression()) |expr| {
-            if (evaluate)
-                try stdout.print("{any}", .{try expr.evaluate(file_contents, allocator)})
-            else
-                try expr.emit(file_contents, stdout);
-        } else |err| switch (err) {
-            error.UnexpectedToken => {
-                const token = parser.peek();
-                const line = std.mem.count(u8, file_contents[0..token.loc.end], "\n");
-                std.debug.print(
-                    "[Line {d}] Error at '{s}': Expect expression.",
-                    .{ line + 1, file_contents[token.loc.start..token.loc.end] },
-                );
-                allocator.free(file_contents);
-                std.process.exit(65);
-            },
-            else => unreachable,
+            if (evaluate) {
+                if (expr.evaluate(file_contents, allocator)) |value| {
+                    try stdout.print("{any}", .{value});
+                } else |err| {
+                    switch (err) {
+                        error.OperandMustBeANumber => {
+                            std.debug.print(
+                                "Operand must be a number.\n[Line {d}]",
+                                .{parser.peek().line(file_contents)},
+                            );
+                            status = 70;
+                        },
+                        else => unreachable,
+                    }
+                }
+            } else try expr.emit(file_contents, stdout);
+        } else |err| {
+            switch (err) {
+                error.UnexpectedToken => {
+                    const token = parser.peek();
+                    std.debug.print(
+                        "[Line {d}] Error at '{s}': Expect expression.",
+                        .{ token.line(file_contents), token.source(file_contents) },
+                    );
+                    status = 65;
+                },
+                else => unreachable,
+            }
         }
     } else {
         try stdout.print("EOF  null\n", .{}); // Placeholder, remove this line when implementing the scanner
     }
+    return status;
 }

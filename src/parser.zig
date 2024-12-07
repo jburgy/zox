@@ -9,6 +9,10 @@ const ParseError = error{
     UnexpectedToken,
 };
 
+const EvaluationError = error{
+    OperandMustBeANumber,
+};
+
 const ValueType = enum {
     nil,
     bool,
@@ -78,11 +82,18 @@ pub const Node = struct {
             .STRING => if (slice[slice.len - 1] == '"') .{ .string = slice[1 .. slice.len - 1] } else error.UnexpectedToken,
             .NUMBER => .{ .number = try std.fmt.parseFloat(f64, slice) },
             .LEFT_PAREN => try self.lhs.?.evaluate(src, allocator),
-            .MINUS => .{ .number = if (self.rhs == null) -(try self.lhs.?.evaluate(src, allocator)).number else blk: {
-                const lhs = try self.lhs.?.evaluate(src, allocator);
-                const rhs = try self.rhs.?.evaluate(src, allocator);
-                break :blk lhs.number - rhs.number;
-            } },
+            .MINUS => blk: {
+                if (self.rhs == null) {
+                    break :blk switch (try self.lhs.?.evaluate(src, allocator)) {
+                        .number => |lhs| .{ .number = -lhs },
+                        else => error.OperandMustBeANumber,
+                    };
+                } else {
+                    const lhs = try self.lhs.?.evaluate(src, allocator);
+                    const rhs = try self.rhs.?.evaluate(src, allocator);
+                    break :blk .{ .number = lhs.number - rhs.number };
+                }
+            },
             .PLUS => blk: {
                 switch (try self.lhs.?.evaluate(src, allocator)) {
                     .number => |lhs| {
