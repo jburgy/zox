@@ -65,6 +65,13 @@ pub fn main() !u8 {
                             );
                             status = 70;
                         },
+                        error.OperandsMustBeNumbers => {
+                            std.debug.print(
+                                "Operands must be numbers.\n[Line {d}]",
+                                .{parser.peek().line(file_contents)},
+                            );
+                            status = 70;
+                        },
                         else => unreachable,
                     }
                 }
