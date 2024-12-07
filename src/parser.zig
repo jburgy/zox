@@ -90,23 +90,33 @@ pub const Node = struct {
                         else => error.OperandMustBeANumber,
                     };
                 } else {
-                    const lhs = try self.lhs.?.evaluate(src, allocator);
-                    const rhs = try self.rhs.?.evaluate(src, allocator);
-                    break :blk .{ .number = lhs.number - rhs.number };
+                    switch (try self.lhs.?.evaluate(src, allocator)) {
+                        .number => |lhs| switch (try self.rhs.?.evaluate(src, allocator)) {
+                            .number => |rhs| break :blk .{ .number = lhs - rhs },
+                            else => break :blk error.OperandsMustBeNumbers,
+                        },
+                        else => break :blk error.OperandsMustBeNumbers,
+                    }
                 }
             },
             .PLUS => blk: {
                 switch (try self.lhs.?.evaluate(src, allocator)) {
                     .number => |lhs| {
-                        const rhs = try self.rhs.?.evaluate(src, allocator);
-                        break :blk .{ .number = lhs + rhs.number };
+                        break :blk switch (try self.rhs.?.evaluate(src, allocator)) {
+                            .number => |rhs| .{ .number = lhs + rhs },
+                            else => error.OperandsMustBeNumbers,
+                        };
                     },
                     .string => |lhs| {
-                        const rhs = try self.rhs.?.evaluate(src, allocator);
-                        const str = try allocator.alloc(u8, lhs.len + rhs.string.len);
-                        @memcpy(str[0..lhs.len], lhs);
-                        @memcpy(str[lhs.len..], rhs.string);
-                        break :blk .{ .string = str };
+                        switch (try self.rhs.?.evaluate(src, allocator)) {
+                            .string => |rhs| {
+                                const str = try allocator.alloc(u8, lhs.len + rhs.len);
+                                @memcpy(str[0..lhs.len], lhs);
+                                @memcpy(str[lhs.len..], rhs);
+                                break :blk .{ .string = str };
+                            },
+                            else => break :blk error.OperandsMustBeNumbers,
+                        }
                     },
                     else => unreachable,
                 }
