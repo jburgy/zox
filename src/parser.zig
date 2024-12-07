@@ -83,124 +83,101 @@ pub const Node = struct {
             .STRING => if (slice[slice.len - 1] == '"') .{ .string = slice[1 .. slice.len - 1] } else error.UnexpectedToken,
             .NUMBER => .{ .number = try std.fmt.parseFloat(f64, slice) },
             .LEFT_PAREN => try self.lhs.?.evaluate(src, allocator),
-            .MINUS => blk: {
-                if (self.rhs == null) {
-                    break :blk switch (try self.lhs.?.evaluate(src, allocator)) {
-                        .number => |lhs| .{ .number = -lhs },
-                        else => error.OperandMustBeANumber,
-                    };
-                } else {
-                    switch (try self.lhs.?.evaluate(src, allocator)) {
-                        .number => |lhs| switch (try self.rhs.?.evaluate(src, allocator)) {
-                            .number => |rhs| break :blk .{ .number = lhs - rhs },
-                            else => break :blk error.OperandsMustBeNumbers,
-                        },
-                        else => break :blk error.OperandsMustBeNumbers,
-                    }
-                }
+            .MINUS => if (self.rhs == null) switch (try self.lhs.?.evaluate(src, allocator)) {
+                .number => |lhs| .{ .number = -lhs },
+                else => error.OperandMustBeANumber,
+            } else switch (try self.lhs.?.evaluate(src, allocator)) {
+                .number => |lhs| switch (try self.rhs.?.evaluate(src, allocator)) {
+                    .number => |rhs| .{ .number = lhs - rhs },
+                    else => error.OperandsMustBeNumbers,
+                },
+                else => error.OperandsMustBeNumbers,
             },
-            .PLUS => blk: {
-                switch (try self.lhs.?.evaluate(src, allocator)) {
-                    .number => |lhs| {
-                        break :blk switch (try self.rhs.?.evaluate(src, allocator)) {
-                            .number => |rhs| .{ .number = lhs + rhs },
-                            else => error.OperandsMustBeNumbers,
-                        };
+            .PLUS => switch (try self.lhs.?.evaluate(src, allocator)) {
+                .number => |lhs| switch (try self.rhs.?.evaluate(src, allocator)) {
+                    .number => |rhs| .{ .number = lhs + rhs },
+                    else => error.OperandsMustBeNumbers,
+                },
+                .string => |lhs| switch (try self.rhs.?.evaluate(src, allocator)) {
+                    .string => |rhs| blk: {
+                        const str = try allocator.alloc(u8, lhs.len + rhs.len);
+                        @memcpy(str[0..lhs.len], lhs);
+                        @memcpy(str[lhs.len..], rhs);
+                        break :blk .{ .string = str };
                     },
-                    .string => |lhs| {
-                        switch (try self.rhs.?.evaluate(src, allocator)) {
-                            .string => |rhs| {
-                                const str = try allocator.alloc(u8, lhs.len + rhs.len);
-                                @memcpy(str[0..lhs.len], lhs);
-                                @memcpy(str[lhs.len..], rhs);
-                                break :blk .{ .string = str };
-                            },
-                            else => break :blk error.OperandsMustBeNumbers,
-                        }
-                    },
-                    else => unreachable,
-                }
+                    else => error.OperandsMustBeNumbers,
+                },
+                else => unreachable,
             },
-            .BANG => .{ .bool = blk: {
-                const value = try self.lhs.?.evaluate(src, allocator);
-                break :blk switch (value) {
-                    .nil => true,
-                    .bool => |b| b == false,
-                    .string => |s| std.mem.eql(u8, s, "") == false,
-                    .number => |x| x == 0.0,
-                };
+            .BANG => .{ .bool = switch (try self.lhs.?.evaluate(src, allocator)) {
+                .nil => true,
+                .bool => |b| b == false,
+                .string => |s| std.mem.eql(u8, s, "") == false,
+                .number => |x| x == 0.0,
             } },
-            .STAR => blk: {
-                switch (try self.lhs.?.evaluate(src, allocator)) {
-                    .number => |lhs| switch (try self.rhs.?.evaluate(src, allocator)) {
-                        .number => |rhs| break :blk .{ .number = lhs * rhs },
-                        else => break :blk error.OperandsMustBeNumbers,
-                    },
-                    else => break :blk error.OperandsMustBeNumbers,
-                }
+            .STAR => switch (try self.lhs.?.evaluate(src, allocator)) {
+                .number => |lhs| switch (try self.rhs.?.evaluate(src, allocator)) {
+                    .number => |rhs| .{ .number = lhs * rhs },
+                    else => error.OperandsMustBeNumbers,
+                },
+                else => error.OperandsMustBeNumbers,
             },
-            .SLASH => blk: {
-                switch (try self.lhs.?.evaluate(src, allocator)) {
-                    .number => |lhs| switch (try self.rhs.?.evaluate(src, allocator)) {
-                        .number => |rhs| break :blk .{ .number = lhs / rhs },
-                        else => break :blk error.OperandsMustBeNumbers,
-                    },
-                    else => break :blk error.OperandsMustBeNumbers,
-                }
+            .SLASH => switch (try self.lhs.?.evaluate(src, allocator)) {
+                .number => |lhs| switch (try self.rhs.?.evaluate(src, allocator)) {
+                    .number => |rhs| .{ .number = lhs / rhs },
+                    else => error.OperandsMustBeNumbers,
+                },
+                else => error.OperandsMustBeNumbers,
             },
-            .LESS => blk: {
-                const lhs = try self.lhs.?.evaluate(src, allocator);
-                const rhs = try self.rhs.?.evaluate(src, allocator);
-                break :blk .{ .bool = lhs.number < rhs.number };
+            .LESS => switch (try self.lhs.?.evaluate(src, allocator)) {
+                .number => |lhs| switch (try self.rhs.?.evaluate(src, allocator)) {
+                    .number => |rhs| .{ .bool = lhs < rhs },
+                    else => error.OperandsMustBeNumbers,
+                },
+                else => error.OperandsMustBeNumbers,
             },
-            .LESS_EQUAL => blk: {
-                const lhs = try self.lhs.?.evaluate(src, allocator);
-                const rhs = try self.rhs.?.evaluate(src, allocator);
-                break :blk .{ .bool = lhs.number <= rhs.number };
+            .LESS_EQUAL => switch (try self.lhs.?.evaluate(src, allocator)) {
+                .number => |lhs| switch (try self.rhs.?.evaluate(src, allocator)) {
+                    .number => |rhs| .{ .bool = lhs <= rhs },
+                    else => error.OperandsMustBeNumbers,
+                },
+                else => error.OperandsMustBeNumbers,
             },
-            .GREATER => blk: {
-                const lhs = try self.lhs.?.evaluate(src, allocator);
-                const rhs = try self.rhs.?.evaluate(src, allocator);
-                break :blk .{ .bool = lhs.number > rhs.number };
+            .GREATER => switch (try self.lhs.?.evaluate(src, allocator)) {
+                .number => |lhs| switch (try self.rhs.?.evaluate(src, allocator)) {
+                    .number => |rhs| .{ .bool = lhs > rhs },
+                    else => error.OperandsMustBeNumbers,
+                },
+                else => error.OperandsMustBeNumbers,
             },
-            .GREATER_EQUAL => blk: {
-                const lhs = try self.lhs.?.evaluate(src, allocator);
-                const rhs = try self.rhs.?.evaluate(src, allocator);
-                break :blk .{ .bool = lhs.number >= rhs.number };
+            .GREATER_EQUAL => switch (try self.lhs.?.evaluate(src, allocator)) {
+                .number => |lhs| switch (try self.rhs.?.evaluate(src, allocator)) {
+                    .number => |rhs| .{ .bool = lhs >= rhs },
+                    else => error.OperandsMustBeNumbers,
+                },
+                else => error.OperandsMustBeNumbers,
             },
-            .EQUAL_EQUAL => .{ .bool = blk: {
-                switch (try self.lhs.?.evaluate(src, allocator)) {
-                    .number => |lhs| {
-                        break :blk switch (try self.rhs.?.evaluate(src, allocator)) {
-                            .number => |rhs| lhs == rhs,
-                            else => false,
-                        };
-                    },
-                    .string => |lhs| {
-                        break :blk switch (try self.rhs.?.evaluate(src, allocator)) {
-                            .string => |rhs| std.mem.eql(u8, lhs, rhs),
-                            else => false,
-                        };
-                    },
-                    else => break :blk false,
-                }
+            .EQUAL_EQUAL => .{ .bool = switch (try self.lhs.?.evaluate(src, allocator)) {
+                .number => |lhs| switch (try self.rhs.?.evaluate(src, allocator)) {
+                    .number => |rhs| lhs == rhs,
+                    else => false,
+                },
+                .string => |lhs| switch (try self.rhs.?.evaluate(src, allocator)) {
+                    .string => |rhs| std.mem.eql(u8, lhs, rhs),
+                    else => false,
+                },
+                else => false,
             } },
-            .BANG_EQUAL => .{ .bool = blk: {
-                switch (try self.lhs.?.evaluate(src, allocator)) {
-                    .number => |lhs| {
-                        break :blk switch (try self.rhs.?.evaluate(src, allocator)) {
-                            .number => |rhs| lhs != rhs,
-                            else => true,
-                        };
-                    },
-                    .string => |lhs| {
-                        break :blk switch (try self.rhs.?.evaluate(src, allocator)) {
-                            .string => |rhs| std.mem.eql(u8, lhs, rhs) == false,
-                            else => true,
-                        };
-                    },
-                    else => break :blk true,
-                }
+            .BANG_EQUAL => .{ .bool = switch (try self.lhs.?.evaluate(src, allocator)) {
+                .number => |lhs| switch (try self.rhs.?.evaluate(src, allocator)) {
+                    .number => |rhs| lhs != rhs,
+                    else => true,
+                },
+                .string => |lhs| switch (try self.rhs.?.evaluate(src, allocator)) {
+                    .string => |rhs| std.mem.eql(u8, lhs, rhs) == false,
+                    else => true,
+                },
+                else => true,
             } },
             else => unreachable,
         };
