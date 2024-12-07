@@ -53,7 +53,7 @@ pub fn main() !void {
         var parser = Parser.init(allocator, &tokens);
         if (parser.expression()) |expr| {
             if (evaluate)
-                try stdout.print("{any}", .{try expr.evaluate(file_contents)})
+                try stdout.print("{any}", .{try expr.evaluate(file_contents, allocator)})
             else
                 try expr.emit(file_contents, stdout);
         } else |err| switch (err) {
