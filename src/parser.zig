@@ -69,7 +69,7 @@ pub const Node = struct {
         }
     }
 
-    pub fn evaluate(self: @This(), src: []const u8) !Value {
+    pub fn evaluate(self: @This(), src: []const u8, allocator: std.mem.Allocator) !Value {
         const slice = src[self.token.loc.start..self.token.loc.end];
         return switch (self.token.tag) {
             .FALSE => .{ .bool = false },
@@ -77,19 +77,30 @@ pub const Node = struct {
             .TRUE => .{ .bool = true },
             .STRING => if (slice[slice.len - 1] == '"') .{ .string = slice[1 .. slice.len - 1] } else error.UnexpectedToken,
             .NUMBER => .{ .number = try std.fmt.parseFloat(f64, slice) },
-            .LEFT_PAREN => try self.lhs.?.evaluate(src),
-            .MINUS => .{ .number = if (self.rhs == null) -(try self.lhs.?.evaluate(src)).number else blk: {
-                const lhs = try self.lhs.?.evaluate(src);
-                const rhs = try self.rhs.?.evaluate(src);
+            .LEFT_PAREN => try self.lhs.?.evaluate(src, allocator),
+            .MINUS => .{ .number = if (self.rhs == null) -(try self.lhs.?.evaluate(src, allocator)).number else blk: {
+                const lhs = try self.lhs.?.evaluate(src, allocator);
+                const rhs = try self.rhs.?.evaluate(src, allocator);
                 break :blk lhs.number - rhs.number;
             } },
             .PLUS => blk: {
-                const lhs = try self.lhs.?.evaluate(src);
-                const rhs = try self.rhs.?.evaluate(src);
-                break :blk .{ .number = lhs.number + rhs.number };
+                switch (try self.lhs.?.evaluate(src, allocator)) {
+                    .number => |lhs| {
+                        const rhs = try self.rhs.?.evaluate(src, allocator);
+                        break :blk .{ .number = lhs + rhs.number };
+                    },
+                    .string => |lhs| {
+                        const rhs = try self.rhs.?.evaluate(src, allocator);
+                        const str = try allocator.alloc(u8, lhs.len + rhs.string.len);
+                        @memcpy(str[0..lhs.len], lhs);
+                        @memcpy(str[lhs.len..], rhs.string);
+                        break :blk .{ .string = str };
+                    },
+                    else => unreachable,
+                }
             },
             .BANG => .{ .bool = blk: {
-                const value = try self.lhs.?.evaluate(src);
+                const value = try self.lhs.?.evaluate(src, allocator);
                 break :blk switch (value) {
                     .nil => true,
                     .bool => |b| b == false,
@@ -98,13 +109,13 @@ pub const Node = struct {
                 };
             } },
             .STAR => blk: {
-                const lhs = try self.lhs.?.evaluate(src);
-                const rhs = try self.rhs.?.evaluate(src);
+                const lhs = try self.lhs.?.evaluate(src, allocator);
+                const rhs = try self.rhs.?.evaluate(src, allocator);
                 break :blk .{ .number = lhs.number * rhs.number };
             },
             .SLASH => blk: {
-                const lhs = try self.lhs.?.evaluate(src);
-                const rhs = try self.rhs.?.evaluate(src);
+                const lhs = try self.lhs.?.evaluate(src, allocator);
+                const rhs = try self.rhs.?.evaluate(src, allocator);
                 break :blk .{ .number = lhs.number / rhs.number };
             },
             else => unreachable,
