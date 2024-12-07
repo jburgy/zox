@@ -11,6 +11,7 @@ const ParseError = error{
 
 const EvaluationError = error{
     OperandMustBeANumber,
+    OperandsMustBeNumbers,
 };
 
 const ValueType = enum {
@@ -120,14 +121,22 @@ pub const Node = struct {
                 };
             } },
             .STAR => blk: {
-                const lhs = try self.lhs.?.evaluate(src, allocator);
-                const rhs = try self.rhs.?.evaluate(src, allocator);
-                break :blk .{ .number = lhs.number * rhs.number };
+                switch (try self.lhs.?.evaluate(src, allocator)) {
+                    .number => |lhs| switch (try self.rhs.?.evaluate(src, allocator)) {
+                        .number => |rhs| break :blk .{ .number = lhs * rhs },
+                        else => break :blk error.OperandsMustBeNumbers,
+                    },
+                    else => break :blk error.OperandsMustBeNumbers,
+                }
             },
             .SLASH => blk: {
-                const lhs = try self.lhs.?.evaluate(src, allocator);
-                const rhs = try self.rhs.?.evaluate(src, allocator);
-                break :blk .{ .number = lhs.number / rhs.number };
+                switch (try self.lhs.?.evaluate(src, allocator)) {
+                    .number => |lhs| switch (try self.rhs.?.evaluate(src, allocator)) {
+                        .number => |rhs| break :blk .{ .number = lhs / rhs },
+                        else => break :blk error.OperandsMustBeNumbers,
+                    },
+                    else => break :blk error.OperandsMustBeNumbers,
+                }
             },
             .LESS => blk: {
                 const lhs = try self.lhs.?.evaluate(src, allocator);
