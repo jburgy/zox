@@ -12,16 +12,22 @@ const ParseError = error{
 const ValueType = enum {
     nil,
     bool,
+    string,
+    number,
 };
 
 const Value = union(ValueType) {
     nil: void,
     bool: bool,
+    string: []const u8,
+    number: f64,
 
     pub fn format(value: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
         try switch (value) {
             .nil => writer.print("nil", .{}),
             .bool => writer.print("{any}", .{value.bool}),
+            .string => writer.print("{s}", .{value.string}),
+            .number => writer.print("{d}", .{value.number}),
             // else => unreachable,
         };
     }
@@ -63,11 +69,14 @@ pub const Node = struct {
         }
     }
 
-    pub fn evaluate(self: @This()) Value {
+    pub fn evaluate(self: @This(), src: []const u8) !Value {
+        const slice = src[self.token.loc.start..self.token.loc.end];
         return switch (self.token.tag) {
             .FALSE => .{ .bool = false },
             .NIL => .{ .nil = void{} },
             .TRUE => .{ .bool = true },
+            .STRING => if (slice[slice.len - 1] == '"') .{ .string = slice[1 .. slice.len - 1] } else error.UnexpectedToken,
+            .NUMBER => .{ .number = try std.fmt.parseFloat(f64, slice) },
             else => unreachable,
         };
     }
