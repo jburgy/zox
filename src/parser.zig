@@ -77,6 +77,7 @@ pub const Node = struct {
             .TRUE => .{ .bool = true },
             .STRING => if (slice[slice.len - 1] == '"') .{ .string = slice[1 .. slice.len - 1] } else error.UnexpectedToken,
             .NUMBER => .{ .number = try std.fmt.parseFloat(f64, slice) },
+            .LEFT_PAREN => self.lhs.?.evaluate(src),
             else => unreachable,
         };
     }
