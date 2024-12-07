@@ -79,6 +79,14 @@ pub const Token = struct {
     fn maybeReserved(name: []const u8) ?Tag {
         return reserved.get(name);
     }
+
+    pub fn line(self: @This(), src: []const u8) usize {
+        return std.mem.count(u8, src[0..self.loc.end], "\n") + 1;
+    }
+
+    pub fn source(self: @This(), src: []const u8) []const u8 {
+        return src[self.loc.start..self.loc.end];
+    }
 };
 
 pub const Tokenizer = struct {
@@ -86,13 +94,12 @@ pub const Tokenizer = struct {
     index: usize,
 
     pub fn dump(self: *Tokenizer, token: Token) !bool {
-        const src = self.buffer[token.loc.start..token.loc.end];
+        const src = token.source(self.buffer);
         var lexical_error = false;
 
         switch (token.tag) {
             .INVALID => {
-                const line = std.mem.count(u8, self.buffer[0..token.loc.end], "\n");
-                try stderr.print("[line {d}] Error: Unexpected character: {s}\n", .{ line + 1, src });
+                try stderr.print("[line {d}] Error: Unexpected character: {s}\n", .{ token.line(self.buffer), src });
                 lexical_error = true;
             },
             .STRING => {
@@ -100,8 +107,7 @@ pub const Tokenizer = struct {
                 if (valid) {
                     try stdout.print("{s} {s} {s}\n", .{ @tagName(token.tag), src, src[1 .. src.len - 1] });
                 } else {
-                    const line = std.mem.count(u8, self.buffer[0..token.loc.end], "\n");
-                    try stderr.print("[line {d}] Error: Unterminated string.\n", .{line + 1});
+                    try stderr.print("[line {d}] Error: Unterminated string.\n", .{token.line(self.buffer)});
                     lexical_error = true;
                 }
             },
