@@ -78,7 +78,16 @@ pub const Node = struct {
             .STRING => if (slice[slice.len - 1] == '"') .{ .string = slice[1 .. slice.len - 1] } else error.UnexpectedToken,
             .NUMBER => .{ .number = try std.fmt.parseFloat(f64, slice) },
             .LEFT_PAREN => try self.lhs.?.evaluate(src),
-            .MINUS => if (self.rhs == null) .{ .number = -(try self.lhs.?.evaluate(src)).number } else unreachable,
+            .MINUS => .{ .number = if (self.rhs == null) -(try self.lhs.?.evaluate(src)).number else blk: {
+                const lhs = try self.lhs.?.evaluate(src);
+                const rhs = try self.rhs.?.evaluate(src);
+                break :blk lhs.number - rhs.number;
+            } },
+            .PLUS => blk: {
+                const lhs = try self.lhs.?.evaluate(src);
+                const rhs = try self.rhs.?.evaluate(src);
+                break :blk .{ .number = lhs.number + rhs.number };
+            },
             .BANG => .{ .bool = blk: {
                 const value = try self.lhs.?.evaluate(src);
                 break :blk switch (value) {
@@ -88,6 +97,16 @@ pub const Node = struct {
                     .number => |x| x == 0.0,
                 };
             } },
+            .STAR => blk: {
+                const lhs = try self.lhs.?.evaluate(src);
+                const rhs = try self.rhs.?.evaluate(src);
+                break :blk .{ .number = lhs.number * rhs.number };
+            },
+            .SLASH => blk: {
+                const lhs = try self.lhs.?.evaluate(src);
+                const rhs = try self.rhs.?.evaluate(src);
+                break :blk .{ .number = lhs.number / rhs.number };
+            },
             else => unreachable,
         };
     }
