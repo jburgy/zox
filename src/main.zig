@@ -58,15 +58,17 @@ pub fn main() !u8 {
                     try stdout.print("{any}", .{value});
                 } else |err| {
                     switch (err) {
-                        error.OperandMustBeANumber => {
-                            std.debug.print(
-                                "Operand must be a number.\n[Line {d}]",
-                                .{parser.peek().line(file_contents)},
-                            );
-                            status = 70;
-                        },
+                        error.OperandMustBeANumber => std.debug.print(
+                            "Operand must be a number.\n[Line {d}]",
+                            .{parser.peek().line(file_contents)},
+                        ),
+                        error.OperandsMustBeNumbers => std.debug.print(
+                            "Operands must be numbers.\n[Line {d}]",
+                            .{parser.peek().line(file_contents)},
+                        ),
                         else => unreachable,
                     }
+                    status = 70;
                 }
             } else try expr.emit(file_contents, stdout);
         } else |err| {
