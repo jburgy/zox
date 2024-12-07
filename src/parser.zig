@@ -138,6 +138,40 @@ pub const Node = struct {
                 const rhs = try self.rhs.?.evaluate(src, allocator);
                 break :blk .{ .bool = lhs.number >= rhs.number };
             },
+            .EQUAL_EQUAL => .{ .bool = blk: {
+                switch (try self.lhs.?.evaluate(src, allocator)) {
+                    .number => |lhs| {
+                        break :blk switch (try self.rhs.?.evaluate(src, allocator)) {
+                            .number => |rhs| lhs == rhs,
+                            else => false,
+                        };
+                    },
+                    .string => |lhs| {
+                        break :blk switch (try self.rhs.?.evaluate(src, allocator)) {
+                            .string => |rhs| std.mem.eql(u8, lhs, rhs),
+                            else => false,
+                        };
+                    },
+                    else => break :blk false,
+                }
+            } },
+            .BANG_EQUAL => .{ .bool = blk: {
+                switch (try self.lhs.?.evaluate(src, allocator)) {
+                    .number => |lhs| {
+                        break :blk switch (try self.rhs.?.evaluate(src, allocator)) {
+                            .number => |rhs| lhs != rhs,
+                            else => true,
+                        };
+                    },
+                    .string => |lhs| {
+                        break :blk switch (try self.rhs.?.evaluate(src, allocator)) {
+                            .string => |rhs| std.mem.eql(u8, lhs, rhs) == false,
+                            else => true,
+                        };
+                    },
+                    else => break :blk true,
+                }
+            } },
             else => unreachable,
         };
     }
