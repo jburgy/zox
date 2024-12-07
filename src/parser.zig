@@ -118,6 +118,26 @@ pub const Node = struct {
                 const rhs = try self.rhs.?.evaluate(src, allocator);
                 break :blk .{ .number = lhs.number / rhs.number };
             },
+            .LESS => blk: {
+                const lhs = try self.lhs.?.evaluate(src, allocator);
+                const rhs = try self.rhs.?.evaluate(src, allocator);
+                break :blk .{ .bool = lhs.number < rhs.number };
+            },
+            .LESS_EQUAL => blk: {
+                const lhs = try self.lhs.?.evaluate(src, allocator);
+                const rhs = try self.rhs.?.evaluate(src, allocator);
+                break :blk .{ .bool = lhs.number <= rhs.number };
+            },
+            .GREATER => blk: {
+                const lhs = try self.lhs.?.evaluate(src, allocator);
+                const rhs = try self.rhs.?.evaluate(src, allocator);
+                break :blk .{ .bool = lhs.number > rhs.number };
+            },
+            .GREATER_EQUAL => blk: {
+                const lhs = try self.lhs.?.evaluate(src, allocator);
+                const rhs = try self.rhs.?.evaluate(src, allocator);
+                break :blk .{ .bool = lhs.number >= rhs.number };
+            },
             else => unreachable,
         };
     }
