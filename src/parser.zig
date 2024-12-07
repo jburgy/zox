@@ -77,7 +77,17 @@ pub const Node = struct {
             .TRUE => .{ .bool = true },
             .STRING => if (slice[slice.len - 1] == '"') .{ .string = slice[1 .. slice.len - 1] } else error.UnexpectedToken,
             .NUMBER => .{ .number = try std.fmt.parseFloat(f64, slice) },
-            .LEFT_PAREN => self.lhs.?.evaluate(src),
+            .LEFT_PAREN => try self.lhs.?.evaluate(src),
+            .MINUS => if (self.rhs == null) .{ .number = -(try self.lhs.?.evaluate(src)).number } else unreachable,
+            .BANG => .{ .bool = blk: {
+                const value = try self.lhs.?.evaluate(src);
+                break :blk switch (value) {
+                    .nil => true,
+                    .bool => |b| b == false,
+                    .string => |s| std.mem.eql(u8, s, "") == false,
+                    .number => |x| x == 0.0,
+                };
+            } },
             else => unreachable,
         };
     }
