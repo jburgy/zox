@@ -4,9 +4,12 @@ const tokenizer = @import("tokenizer.zig");
 const Token = tokenizer.Token;
 const Tokenizer = tokenizer.Tokenizer;
 
+const stdout = std.io.getStdOut().writer();
+
 const ParseError = error{
     OutOfMemory,
     UnexpectedToken,
+    MissingSemicolon,
 };
 
 const EvaluationError = error{
@@ -29,7 +32,7 @@ const Value = union(ValueType) {
 
     pub fn format(value: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
         try switch (value) {
-            .nil => writer.print("nil", .{}),
+            .nil => {},
             .bool => writer.print("{any}", .{value.bool}),
             .string => writer.print("{s}", .{value.string}),
             .number => writer.print("{d}", .{value.number}),
@@ -179,6 +182,13 @@ pub const Node = struct {
                 },
                 else => true,
             } },
+            .PRINT => .{ .nil = {
+                try switch (try self.lhs.?.evaluate(src, allocator)) {
+                    .number => |d| stdout.print("{d}", .{d}),
+                    .string => |s| stdout.print("{s}", .{s}),
+                    else => unreachable,
+                };
+            } },
             else => unreachable,
         };
     }
@@ -213,11 +223,23 @@ pub const Parser = struct {
         return token;
     }
 
+    pub fn statement(self: *Parser) ParseError!*Node {
+        const token = self.peek();
+        const stmt = switch (token.tag) {
+            .PRINT => try self.create(self.next(), try self.expression(), null),
+            else => try self.expression(),
+        };
+        return switch (self.next().tag) {
+            .SEMICOLON => stmt,
+            else => error.MissingSemicolon,
+        };
+    }
+
     pub fn expression(self: *Parser) ParseError!*Node {
         return self.equality();
     }
 
-    pub fn equality(self: *Parser) ParseError!*Node {
+    fn equality(self: *Parser) ParseError!*Node {
         var result = try self.comparison();
         while (true) {
             const token = self.peek();
@@ -229,7 +251,7 @@ pub const Parser = struct {
         return result;
     }
 
-    pub fn comparison(self: *Parser) ParseError!*Node {
+    fn comparison(self: *Parser) ParseError!*Node {
         var result = try self.term();
         while (true) {
             const token = self.peek();

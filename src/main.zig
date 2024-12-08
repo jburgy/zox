@@ -21,8 +21,9 @@ pub fn main() !u8 {
     const tokenize = std.mem.eql(u8, command, "tokenize");
     const parse = std.mem.eql(u8, command, "parse");
     const evaluate = std.mem.eql(u8, command, "evaluate");
+    const run = std.mem.eql(u8, command, "run");
 
-    if (!(tokenize or parse or evaluate)) {
+    if (!(tokenize or parse or evaluate or run)) {
         std.debug.print("Unknown command: {s}\n", .{command});
         std.process.exit(1);
     }
@@ -49,11 +50,13 @@ pub fn main() !u8 {
         if (lexical_error) {
             status = 65;
         }
-    } else if ((parse or evaluate) and file_contents.len > 0) {
+    } else if ((parse or evaluate or run) and file_contents.len > 0) {
         var tokens = Tokenizer.init(file_contents);
         var parser = Parser.init(allocator, &tokens);
-        if (parser.expression()) |expr| {
-            if (evaluate) {
+        if (if (evaluate) parser.expression() else parser.statement()) |expr| {
+            if (parse) {
+                try expr.emit(file_contents, stdout);
+            } else {
                 if (expr.evaluate(file_contents, allocator)) |value| {
                     try stdout.print("{any}", .{value});
                 } else |err| {
@@ -70,7 +73,7 @@ pub fn main() !u8 {
                     }
                     status = 70;
                 }
-            } else try expr.emit(file_contents, stdout);
+            }
         } else |err| {
             switch (err) {
                 error.UnexpectedToken => {
