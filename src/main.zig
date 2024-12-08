@@ -21,8 +21,9 @@ pub fn main() !u8 {
     const tokenize = std.mem.eql(u8, command, "tokenize");
     const parse = std.mem.eql(u8, command, "parse");
     const evaluate = std.mem.eql(u8, command, "evaluate");
+    const run = std.mem.eql(u8, command, "run");
 
-    if (!(tokenize or parse or evaluate)) {
+    if (!(tokenize or parse or evaluate or run)) {
         std.debug.print("Unknown command: {s}\n", .{command});
         std.process.exit(1);
     }
@@ -49,28 +50,29 @@ pub fn main() !u8 {
         if (lexical_error) {
             status = 65;
         }
-    } else if ((parse or evaluate) and file_contents.len > 0) {
+    } else if ((parse or evaluate or run) and file_contents.len > 0) {
         var tokens = Tokenizer.init(file_contents);
         var parser = Parser.init(allocator, &tokens);
-        if (parser.expression()) |expr| {
-            if (evaluate) {
-                if (expr.evaluate(file_contents, allocator)) |value| {
+        if (if (run) parser.statement() else parser.expression()) |expr| {
+            if (parse) {
+                try expr.emit(file_contents, stdout);
+            } else if (expr.evaluate(file_contents, allocator)) |value| {
+                if (evaluate)
                     try stdout.print("{any}", .{value});
-                } else |err| {
-                    switch (err) {
-                        error.OperandMustBeANumber => std.debug.print(
-                            "Operand must be a number.\n[Line {d}]",
-                            .{parser.peek().line(file_contents)},
-                        ),
-                        error.OperandsMustBeNumbers => std.debug.print(
-                            "Operands must be numbers.\n[Line {d}]",
-                            .{parser.peek().line(file_contents)},
-                        ),
-                        else => unreachable,
-                    }
-                    status = 70;
+            } else |err| {
+                switch (err) {
+                    error.OperandMustBeANumber => std.debug.print(
+                        "Operand must be a number.\n[Line {d}]",
+                        .{parser.peek().line(file_contents)},
+                    ),
+                    error.OperandsMustBeNumbers => std.debug.print(
+                        "Operands must be numbers.\n[Line {d}]",
+                        .{parser.peek().line(file_contents)},
+                    ),
+                    else => unreachable,
                 }
-            } else try expr.emit(file_contents, stdout);
+                status = 70;
+            }
         } else |err| {
             switch (err) {
                 error.UnexpectedToken => {
@@ -81,6 +83,7 @@ pub fn main() !u8 {
                     );
                     status = 65;
                 },
+                error.MissingSemicolon => {},
                 else => unreachable,
             }
         }
