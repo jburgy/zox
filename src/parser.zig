@@ -14,6 +14,7 @@ const ParseError = error{
 const EvaluationError = error{
     OperandMustBeANumber,
     OperandsMustBeNumbers,
+    UndefinedVariable,
 };
 
 const ValueType = enum {
@@ -206,7 +207,13 @@ pub const Node = struct {
                 const loc = self.args[0].token.loc;
                 try env.put(src[loc.start..loc.end], try self.args[1].evaluate(src, allocator, env));
             } },
-            .IDENTIFIER => env.get(slice) orelse .{ .nil = {} },
+            .IDENTIFIER => if (env.get(slice)) |value| value else blk: {
+                std.debug.print(
+                    "Undefined variable '{s}'.\n[Line {d}]",
+                    .{ self.token.source(src), self.token.line(src) },
+                );
+                break :blk error.UndefinedVariable;
+            },
             else => unreachable,
         };
     }
