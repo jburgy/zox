@@ -1,8 +1,3 @@
-{
-    var bar = 25;
-    {
-        var baz = 25;
-        print baz;
-    }
-    print bar;
+if (true) {
+    print "block body";
 }
