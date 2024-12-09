@@ -1,2 +1,8 @@
-var a;
-print a;
+var hello = 65;
+var baz;
+var quz;
+
+hello = baz = quz = hello * 2;
+print hello;
+print baz;
+print baz;
