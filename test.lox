@@ -1,2 +1,2 @@
-print 22;
-print x
+var a;
+print a;
