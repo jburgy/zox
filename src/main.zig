@@ -71,7 +71,7 @@ pub fn main() !u8 {
                         "Operands must be numbers.\n[Line {d}]",
                         .{parser.peek().line(file_contents)},
                     ),
-                    else => unreachable,
+                    else => {},
                 }
                 status = 70;
             }

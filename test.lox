@@ -1,2 +1,2 @@
-var baz = 10;
-print baz;
+print 22;
+print x
