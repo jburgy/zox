@@ -9,7 +9,6 @@ const stdout = std.io.getStdOut().writer();
 const ParseError = error{
     OutOfMemory,
     UnexpectedToken,
-    MissingSemicolon,
 };
 
 const EvaluationError = error{
@@ -41,6 +40,8 @@ const Value = union(ValueType) {
     }
 };
 
+pub const ValueMap = std.StringHashMap(Value);
+
 pub const Node = struct {
     token: Token,
     args: []const *Node,
@@ -63,7 +64,14 @@ pub const Node = struct {
                 try writer.print("{d:.[1]}", .{ value, precision });
             },
             .STRING => try writer.print("{s}", .{slice[1 .. slice.len - 1]}),
-            .FALSE, .NIL, .TRUE => try writer.print("{s}", .{slice}),
+            .FALSE, .NIL, .TRUE, .IDENTIFIER => try writer.print("{s}", .{slice}),
+            .SEMICOLON => {
+                try self.args[0].emit(src, writer);
+                for (self.args[1..]) |arg| {
+                    try writer.print("\n", .{});
+                    try arg.emit(src, writer);
+                }
+            },
             else => {
                 try writer.print("({s} ", .{slice});
 
@@ -77,7 +85,7 @@ pub const Node = struct {
         }
     }
 
-    pub fn evaluate(self: @This(), src: []const u8, allocator: std.mem.Allocator) !Value {
+    pub fn evaluate(self: @This(), src: []const u8, allocator: std.mem.Allocator, env: *ValueMap) !Value {
         const slice = src[self.token.loc.start..self.token.loc.end];
         return switch (self.token.tag) {
             .FALSE => .{ .bool = false },
@@ -85,23 +93,23 @@ pub const Node = struct {
             .TRUE => .{ .bool = true },
             .STRING => if (slice[slice.len - 1] == '"') .{ .string = slice[1 .. slice.len - 1] } else error.UnexpectedToken,
             .NUMBER => .{ .number = try std.fmt.parseFloat(f64, slice) },
-            .LEFT_PAREN => try self.args[0].evaluate(src, allocator),
-            .MINUS => if (self.args.len == 1) switch (try self.args[0].evaluate(src, allocator)) {
+            .LEFT_PAREN => try self.args[0].evaluate(src, allocator, env),
+            .MINUS => if (self.args.len == 1) switch (try self.args[0].evaluate(src, allocator, env)) {
                 .number => |lhs| .{ .number = -lhs },
                 else => error.OperandMustBeANumber,
-            } else switch (try self.args[0].evaluate(src, allocator)) {
-                .number => |lhs| switch (try self.args[1].evaluate(src, allocator)) {
+            } else switch (try self.args[0].evaluate(src, allocator, env)) {
+                .number => |lhs| switch (try self.args[1].evaluate(src, allocator, env)) {
                     .number => |rhs| .{ .number = lhs - rhs },
                     else => error.OperandsMustBeNumbers,
                 },
                 else => error.OperandsMustBeNumbers,
             },
-            .PLUS => switch (try self.args[0].evaluate(src, allocator)) {
-                .number => |lhs| switch (try self.args[1].evaluate(src, allocator)) {
+            .PLUS => switch (try self.args[0].evaluate(src, allocator, env)) {
+                .number => |lhs| switch (try self.args[1].evaluate(src, allocator, env)) {
                     .number => |rhs| .{ .number = lhs + rhs },
                     else => error.OperandsMustBeNumbers,
                 },
-                .string => |lhs| switch (try self.args[1].evaluate(src, allocator)) {
+                .string => |lhs| switch (try self.args[1].evaluate(src, allocator, env)) {
                     .string => |rhs| blk: {
                         const str = try allocator.alloc(u8, lhs.len + rhs.len);
                         @memcpy(str[0..lhs.len], lhs);
@@ -112,80 +120,93 @@ pub const Node = struct {
                 },
                 else => unreachable,
             },
-            .BANG => .{ .bool = switch (try self.args[0].evaluate(src, allocator)) {
+            .BANG => .{ .bool = switch (try self.args[0].evaluate(src, allocator, env)) {
                 .nil => true,
                 .bool => |b| b == false,
                 .string => |s| std.mem.eql(u8, s, "") == false,
                 .number => |x| x == 0.0,
             } },
-            .STAR => switch (try self.args[0].evaluate(src, allocator)) {
-                .number => |lhs| switch (try self.args[1].evaluate(src, allocator)) {
+            .STAR => switch (try self.args[0].evaluate(src, allocator, env)) {
+                .number => |lhs| switch (try self.args[1].evaluate(src, allocator, env)) {
                     .number => |rhs| .{ .number = lhs * rhs },
                     else => error.OperandsMustBeNumbers,
                 },
                 else => error.OperandsMustBeNumbers,
             },
-            .SLASH => switch (try self.args[0].evaluate(src, allocator)) {
-                .number => |lhs| switch (try self.args[1].evaluate(src, allocator)) {
+            .SLASH => switch (try self.args[0].evaluate(src, allocator, env)) {
+                .number => |lhs| switch (try self.args[1].evaluate(src, allocator, env)) {
                     .number => |rhs| .{ .number = lhs / rhs },
                     else => error.OperandsMustBeNumbers,
                 },
                 else => error.OperandsMustBeNumbers,
             },
-            .LESS => switch (try self.args[0].evaluate(src, allocator)) {
-                .number => |lhs| switch (try self.args[1].evaluate(src, allocator)) {
+            .LESS => switch (try self.args[0].evaluate(src, allocator, env)) {
+                .number => |lhs| switch (try self.args[1].evaluate(src, allocator, env)) {
                     .number => |rhs| .{ .bool = lhs < rhs },
                     else => error.OperandsMustBeNumbers,
                 },
                 else => error.OperandsMustBeNumbers,
             },
-            .LESS_EQUAL => switch (try self.args[0].evaluate(src, allocator)) {
-                .number => |lhs| switch (try self.args[1].evaluate(src, allocator)) {
+            .LESS_EQUAL => switch (try self.args[0].evaluate(src, allocator, env)) {
+                .number => |lhs| switch (try self.args[1].evaluate(src, allocator, env)) {
                     .number => |rhs| .{ .bool = lhs <= rhs },
                     else => error.OperandsMustBeNumbers,
                 },
                 else => error.OperandsMustBeNumbers,
             },
-            .GREATER => switch (try self.args[0].evaluate(src, allocator)) {
-                .number => |lhs| switch (try self.args[1].evaluate(src, allocator)) {
+            .GREATER => switch (try self.args[0].evaluate(src, allocator, env)) {
+                .number => |lhs| switch (try self.args[1].evaluate(src, allocator, env)) {
                     .number => |rhs| .{ .bool = lhs > rhs },
                     else => error.OperandsMustBeNumbers,
                 },
                 else => error.OperandsMustBeNumbers,
             },
-            .GREATER_EQUAL => switch (try self.args[0].evaluate(src, allocator)) {
-                .number => |lhs| switch (try self.args[1].evaluate(src, allocator)) {
+            .GREATER_EQUAL => switch (try self.args[0].evaluate(src, allocator, env)) {
+                .number => |lhs| switch (try self.args[1].evaluate(src, allocator, env)) {
                     .number => |rhs| .{ .bool = lhs >= rhs },
                     else => error.OperandsMustBeNumbers,
                 },
                 else => error.OperandsMustBeNumbers,
             },
-            .EQUAL_EQUAL => .{ .bool = switch (try self.args[0].evaluate(src, allocator)) {
-                .number => |lhs| switch (try self.args[1].evaluate(src, allocator)) {
+            .EQUAL_EQUAL => .{ .bool = switch (try self.args[0].evaluate(src, allocator, env)) {
+                .number => |lhs| switch (try self.args[1].evaluate(src, allocator, env)) {
                     .number => |rhs| lhs == rhs,
                     else => false,
                 },
-                .string => |lhs| switch (try self.args[1].evaluate(src, allocator)) {
+                .string => |lhs| switch (try self.args[1].evaluate(src, allocator, env)) {
                     .string => |rhs| std.mem.eql(u8, lhs, rhs),
                     else => false,
                 },
+                .bool => |lhs| switch (try self.args[1].evaluate(src, allocator, env)) {
+                    .bool => |rhs| lhs == rhs,
+                    else => true,
+                },
                 else => false,
             } },
-            .BANG_EQUAL => .{ .bool = switch (try self.args[0].evaluate(src, allocator)) {
-                .number => |lhs| switch (try self.args[1].evaluate(src, allocator)) {
+            .BANG_EQUAL => .{ .bool = switch (try self.args[0].evaluate(src, allocator, env)) {
+                .number => |lhs| switch (try self.args[1].evaluate(src, allocator, env)) {
                     .number => |rhs| lhs != rhs,
                     else => true,
                 },
-                .string => |lhs| switch (try self.args[1].evaluate(src, allocator)) {
+                .string => |lhs| switch (try self.args[1].evaluate(src, allocator, env)) {
                     .string => |rhs| std.mem.eql(u8, lhs, rhs) == false,
+                    else => true,
+                },
+                .bool => |lhs| switch (try self.args[1].evaluate(src, allocator, env)) {
+                    .bool => |rhs| lhs != rhs,
                     else => true,
                 },
                 else => true,
             } },
-            .PRINT => .{ .nil = try stdout.print("{any}\n", .{try self.args[0].evaluate(src, allocator)}) },
+            .PRINT => .{ .nil = try stdout.print("{any}\n", .{try self.args[0].evaluate(src, allocator, env)}) },
             .SEMICOLON => .{ .nil = for (self.args) |arg| {
-                _ = try arg.evaluate(src, allocator);
+                _ = try arg.evaluate(src, allocator, env);
             } },
+            .VAR => .{ .nil = {
+                const loc = self.args[0].token.loc;
+                try env.put(src[loc.start..loc.end], try self.args[1].evaluate(src, allocator, env));
+            } },
+            .IDENTIFIER => env.get(slice) orelse .{ .nil = {} },
             else => unreachable,
         };
     }
@@ -245,12 +266,27 @@ pub const Parser = struct {
         const token = self.peek();
         const stmt = switch (token.tag) {
             .PRINT => try self.create(self.next(), try self.expression(), null),
+            .VAR => blk: {
+                _ = self.next();
+                const idToken = self.peek();
+                switch (idToken.tag) {
+                    .IDENTIFIER => {
+                        const lhs = try self.create(self.next(), null, null);
+                        break :blk switch (self.next().tag) {
+                            .EQUAL => try self.create(token, lhs, try self.expression()),
+                            else => unreachable,
+                        };
+                    },
+                    else => unreachable,
+                }
+            },
             else => try self.expression(),
         };
-        return switch (self.next().tag) {
-            .SEMICOLON => stmt,
-            else => error.MissingSemicolon,
-        };
+        switch (self.peek().tag) {
+            .SEMICOLON => _ = self.next(),
+            else => {},
+        }
+        return stmt;
     }
 
     pub fn expression(self: *Parser) ParseError!*Node {
@@ -323,9 +359,12 @@ pub const Parser = struct {
             .NUMBER, .FALSE, .NIL, .TRUE => try self.create(self.next(), null, null),
             .LEFT_PAREN => blk: {
                 const result = try self.create(self.next(), try self.expression(), null);
-                assert(self.next().tag == .RIGHT_PAREN);
-                break :blk result;
+                break :blk switch (self.next().tag) {
+                    .RIGHT_PAREN => result,
+                    else => error.UnexpectedToken,
+                };
             },
+            .IDENTIFIER => try self.create(self.next(), null, null),
             else => error.UnexpectedToken,
         };
     }

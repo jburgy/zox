@@ -1,6 +1,7 @@
 const std = @import("std");
 const Tokenizer = @import("tokenizer.zig").Tokenizer;
 const Parser = @import("parser.zig").Parser;
+const ValueMap = @import("parser.zig").ValueMap;
 
 const stdout = std.io.getStdOut().writer();
 
@@ -53,10 +54,11 @@ pub fn main() !u8 {
     } else if ((parse or evaluate or run) and file_contents.len > 0) {
         var tokens = Tokenizer.init(file_contents);
         var parser = Parser.init(allocator, &tokens);
-        if (if (run) parser.statements() else parser.expression()) |expr| {
+        var env = ValueMap.init(allocator);
+        if (if (evaluate) parser.expression() else parser.statements()) |expr| {
             if (parse) {
                 try expr.emit(file_contents, stdout);
-            } else if (expr.evaluate(file_contents, allocator)) |value| {
+            } else if (expr.evaluate(file_contents, allocator, &env)) |value| {
                 if (evaluate)
                     try stdout.print("{any}", .{value});
             } else |err| {
@@ -83,7 +85,6 @@ pub fn main() !u8 {
                     );
                     status = 65;
                 },
-                error.MissingSemicolon => {},
                 else => unreachable,
             }
         }
