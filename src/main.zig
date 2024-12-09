@@ -53,7 +53,7 @@ pub fn main() !u8 {
     } else if ((parse or evaluate or run) and file_contents.len > 0) {
         var tokens = Tokenizer.init(file_contents);
         var parser = Parser.init(allocator, &tokens);
-        if (if (run) parser.statement() else parser.expression()) |expr| {
+        if (if (run) parser.statements() else parser.expression()) |expr| {
             if (parse) {
                 try expr.emit(file_contents, stdout);
             } else if (expr.evaluate(file_contents, allocator)) |value| {
