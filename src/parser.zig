@@ -220,6 +220,22 @@ pub const Node = struct {
                 );
                 break :blk error.UndefinedVariable;
             },
+            .EQUAL => blk: {
+                const lhs = self.args[0].token;
+                const loc = lhs.loc;
+                const key = src[loc.start..loc.end];
+                if (env.get(key) == null) {
+                    std.debug.print(
+                        "Undefined variable '{s}'.\n[Line {d}]",
+                        .{ lhs.source(src), lhs.line(src) },
+                    );
+                    break :blk error.UndefinedVariable;
+                } else {
+                    const val = try self.args[1].evaluate(src, allocator, env);
+                    try env.put(key, val);
+                    break :blk val;
+                }
+            },
             else => unreachable,
         };
     }
@@ -304,7 +320,14 @@ pub const Parser = struct {
     }
 
     pub fn expression(self: *Parser) ParseError!*Node {
-        return self.equality();
+        var result = try self.equality();
+        while (true) {
+            result = switch (self.peek().tag) {
+                .EQUAL => try self.create(self.next(), result, try self.expression()),
+                else => break,
+            };
+        }
+        return result;
     }
 
     fn equality(self: *Parser) ParseError!*Node {
