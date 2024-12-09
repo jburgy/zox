@@ -257,6 +257,15 @@ pub const Node = struct {
                 _ = try self.args[0].evaluate(src, allocator, env);
                 _ = env.popFirst();
             } },
+            .IF => .{ .nil = {
+                const cond = try self.args[0].evaluate(src, allocator, env);
+                switch (cond) {
+                    .bool => |b| if (b == true) {
+                        _ = try self.args[1].evaluate(src, allocator, env);
+                    },
+                    else => unreachable,
+                }
+            } },
             else => unreachable,
         };
     }
@@ -342,6 +351,19 @@ pub const Parser = struct {
                     else => error.UnexpectedToken,
                 };
             },
+            .IF => blk: {
+                const root = self.next();
+                switch (self.next().tag) {
+                    .LEFT_PAREN => {
+                        const cond = try self.expression();
+                        break :blk switch (self.next().tag) {
+                            .RIGHT_PAREN => try self.create(root, cond, try self.statement()),
+                            else => error.UnexpectedToken,
+                        };
+                    },
+                    else => break :blk error.UnexpectedToken,
+                }
+            },
             else => try self.expression(),
         };
         switch (self.peek().tag) {
@@ -365,8 +387,7 @@ pub const Parser = struct {
     fn equality(self: *Parser) ParseError!*Node {
         var result = try self.comparison();
         while (true) {
-            const token = self.peek();
-            result = switch (token.tag) {
+            result = switch (self.peek().tag) {
                 .EQUAL_EQUAL, .BANG_EQUAL => try self.create(self.next(), result, try self.comparison()),
                 else => break,
             };
@@ -377,8 +398,7 @@ pub const Parser = struct {
     fn comparison(self: *Parser) ParseError!*Node {
         var result = try self.term();
         while (true) {
-            const token = self.peek();
-            result = switch (token.tag) {
+            result = switch (self.peek().tag) {
                 .LESS, .LESS_EQUAL, .GREATER, .GREATER_EQUAL => try self.create(self.next(), result, try self.term()),
                 else => break,
             };
@@ -389,8 +409,7 @@ pub const Parser = struct {
     fn term(self: *Parser) ParseError!*Node {
         var result = try self.factor();
         while (true) {
-            const token = self.peek();
-            result = switch (token.tag) {
+            result = switch (self.peek().tag) {
                 .MINUS, .PLUS => try self.create(self.next(), result, try self.factor()),
                 else => break,
             };
@@ -401,8 +420,7 @@ pub const Parser = struct {
     fn factor(self: *Parser) ParseError!*Node {
         var result = try self.unary();
         while (true) {
-            const token = self.peek();
-            result = switch (token.tag) {
+            result = switch (self.peek().tag) {
                 .STAR, .SLASH => try self.create(self.next(), result, try self.unary()),
                 else => break,
             };
@@ -411,8 +429,7 @@ pub const Parser = struct {
     }
 
     fn unary(self: *Parser) ParseError!*Node {
-        const token = self.peek();
-        return switch (token.tag) {
+        return switch (self.peek().tag) {
             .BANG, .MINUS => self.create(self.next(), try self.unary(), null),
             else => self.primary(),
         };
