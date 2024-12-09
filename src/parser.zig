@@ -205,7 +205,13 @@ pub const Node = struct {
             } },
             .VAR => .{ .nil = {
                 const loc = self.args[0].token.loc;
-                try env.put(src[loc.start..loc.end], try self.args[1].evaluate(src, allocator, env));
+                try env.put(
+                    src[loc.start..loc.end],
+                    switch (self.args.len) {
+                        2 => try self.args[1].evaluate(src, allocator, env),
+                        else => .{ .nil = {} },
+                    },
+                );
             } },
             .IDENTIFIER => if (env.get(slice)) |value| value else blk: {
                 std.debug.print(
@@ -281,6 +287,7 @@ pub const Parser = struct {
                         const lhs = try self.create(self.next(), null, null);
                         break :blk switch (self.next().tag) {
                             .EQUAL => try self.create(token, lhs, try self.expression()),
+                            .SEMICOLON => try self.create(token, lhs, null),
                             else => unreachable,
                         };
                     },
