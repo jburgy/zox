@@ -42,6 +42,7 @@ const Value = union(ValueType) {
 };
 
 pub const ValueMap = std.StringHashMap(Value);
+pub const ValueMaps = std.SinglyLinkedList(ValueMap);
 
 pub const Node = struct {
     token: Token,
@@ -86,7 +87,7 @@ pub const Node = struct {
         }
     }
 
-    pub fn evaluate(self: @This(), src: []const u8, allocator: std.mem.Allocator, env: *ValueMap) !Value {
+    pub fn evaluate(self: @This(), src: []const u8, allocator: std.mem.Allocator, env: *ValueMaps) !Value {
         const slice = src[self.token.loc.start..self.token.loc.end];
         return switch (self.token.tag) {
             .FALSE => .{ .bool = false },
@@ -180,7 +181,7 @@ pub const Node = struct {
                 },
                 .bool => |lhs| switch (try self.args[1].evaluate(src, allocator, env)) {
                     .bool => |rhs| lhs == rhs,
-                    else => true,
+                    else => false,
                 },
                 else => false,
             } },
@@ -205,15 +206,25 @@ pub const Node = struct {
             } },
             .VAR => .{ .nil = {
                 const loc = self.args[0].token.loc;
-                try env.put(
-                    src[loc.start..loc.end],
-                    switch (self.args.len) {
-                        2 => try self.args[1].evaluate(src, allocator, env),
-                        else => .{ .nil = {} },
-                    },
-                );
+                if (env.first) |node|
+                    try node.data.put(
+                        src[loc.start..loc.end],
+                        switch (self.args.len) {
+                            2 => try self.args[1].evaluate(src, allocator, env),
+                            else => .{ .nil = {} },
+                        },
+                    )
+                else
+                    unreachable;
             } },
-            .IDENTIFIER => if (env.get(slice)) |value| value else blk: {
+            .IDENTIFIER => blk: {
+                var it = env.first;
+                while (it) |node| : (it = node.next) {
+                    const scope = node.data;
+                    if (scope.get(slice)) |value| {
+                        break :blk value;
+                    } else continue;
+                }
                 std.debug.print(
                     "Undefined variable '{s}'.\n[Line {d}]",
                     .{ self.token.source(src), self.token.line(src) },
@@ -224,18 +235,28 @@ pub const Node = struct {
                 const lhs = self.args[0].token;
                 const loc = lhs.loc;
                 const key = src[loc.start..loc.end];
-                if (env.get(key) == null) {
-                    std.debug.print(
-                        "Undefined variable '{s}'.\n[Line {d}]",
-                        .{ lhs.source(src), lhs.line(src) },
-                    );
-                    break :blk error.UndefinedVariable;
-                } else {
-                    const val = try self.args[1].evaluate(src, allocator, env);
-                    try env.put(key, val);
-                    break :blk val;
+                var it = env.first;
+                while (it) |node| : (it = node.next) {
+                    var scope = node.data;
+                    if (scope.get(key)) |_| {
+                        const val = try self.args[1].evaluate(src, allocator, env);
+                        try scope.put(key, val);
+                        break :blk val;
+                    } else continue;
                 }
+                std.debug.print(
+                    "Undefined variable '{s}'.\n[Line {d}]",
+                    .{ lhs.source(src), lhs.line(src) },
+                );
+                break :blk error.UndefinedVariable;
             },
+            .LEFT_BRACE => .{ .nil = {
+                var scope = ValueMaps.Node{ .data = ValueMap.init(allocator) };
+                defer scope.data.deinit();
+                env.prepend(&scope);
+                _ = try self.args[0].evaluate(src, allocator, env);
+                _ = env.popFirst();
+            } },
             else => unreachable,
         };
     }
@@ -278,8 +299,12 @@ pub const Parser = struct {
         var stmts = std.ArrayList(*Node).init(self.allocator);
         errdefer stmts.deinit();
 
-        while (self.peek().tag != .EOF)
-            try stmts.append(try self.statement());
+        while (true) {
+            switch (self.peek().tag) {
+                .RIGHT_BRACE, .EOF => break,
+                else => try stmts.append(try self.statement()),
+            }
+        }
         const node = try self.allocator.create(Node);
         node.* = .{
             .token = .{
@@ -309,6 +334,13 @@ pub const Parser = struct {
                     },
                     else => unreachable,
                 }
+            },
+            .LEFT_BRACE => blk: {
+                const result = try self.create(self.next(), try self.statements(), null);
+                break :blk switch (self.next().tag) {
+                    .RIGHT_BRACE => result,
+                    else => error.UnexpectedToken,
+                };
             },
             else => try self.expression(),
         };
