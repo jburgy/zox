@@ -44,7 +44,7 @@ const Value = union(ValueType) {
         return switch (value) {
             .nil => false,
             .bool => |b| b,
-            .string => |s| s.len > 0,
+            .string => true,
             .number => |x| x != 0.0,
         };
     }
