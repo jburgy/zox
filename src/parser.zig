@@ -287,7 +287,13 @@ pub const Node = struct {
                     _ = try self.args[1].evaluate(src, allocator, env);
                 }
             } },
-
+            .FOR => .{ .nil = {
+                _ = try self.args[0].evaluate(src, allocator, env);
+                while ((try self.args[1].evaluate(src, allocator, env)).truthy()) {
+                    _ = try self.args[3].evaluate(src, allocator, env);
+                    _ = try self.args[2].evaluate(src, allocator, env);
+                }
+            } },
             else => unreachable,
         };
     }
@@ -412,6 +418,31 @@ pub const Parser = struct {
                             .RIGHT_PAREN => self.create(root, .{ cond, try self.statement() }),
                             else => error.UnexpectedToken,
                         };
+                    },
+                    else => break :blk error.UnexpectedToken,
+                }
+            },
+            .WHILE => blk: {
+                const root = self.next();
+                switch (self.next().tag) {
+                    .LEFT_PAREN => {
+                        const first = try self.expression();
+                        switch (self.next().tag) {
+                            .SEMICOLON => {
+                                const cond = try self.expression();
+                                switch (self.next().tag) {
+                                    .SEMICOLON => {
+                                        const incr = try self.expression();
+                                        break :blk switch (self.next().tag) {
+                                            .RIGHT_PAREN => try self.create(root, .{ first, cond, incr, try self.statement() }),
+                                            else => error.UnexpectedToken,
+                                        };
+                                    },
+                                    else => break :blk error.UnexpectedToken,
+                                }
+                            },
+                            else => break :blk error.UnexpectedToken,
+                        }
                     },
                     else => break :blk error.UnexpectedToken,
                 }
