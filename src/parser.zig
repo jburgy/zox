@@ -278,6 +278,7 @@ pub const Node = struct {
                 }
             } },
             .OR => .{ .bool = (try self.args[0].evaluate(src, allocator, env)).truthy() or (try self.args[1].evaluate(src, allocator, env)).truthy() },
+            .AND => .{ .bool = (try self.args[0].evaluate(src, allocator, env)).truthy() and (try self.args[1].evaluate(src, allocator, env)).truthy() },
             else => unreachable,
         };
     }
