@@ -429,6 +429,7 @@ pub const Parser = struct {
                     .LEFT_PAREN => {
                         const first = try switch (self.peek().tag) {
                             .SEMICOLON => self.create(self.next(), .{}),
+                            .LEFT_BRACE => break :blk error.UnexpectedToken,
                             else => self.statement(),
                         };
                         const cond = try self.expression();
