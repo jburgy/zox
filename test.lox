@@ -1,3 +1,2 @@
-if (false) {
-    print "block body";
-}
+var foo = 0;
+while (foo < 3) print foo = foo + 1;
