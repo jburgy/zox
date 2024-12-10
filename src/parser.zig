@@ -282,6 +282,12 @@ pub const Node = struct {
                 const lhs = try self.args[0].evaluate(src, allocator, env);
                 break :blk if (!lhs.truthy()) lhs else try self.args[1].evaluate(src, allocator, env);
             },
+            .WHILE => .{ .nil = {
+                while ((try self.args[0].evaluate(src, allocator, env)).truthy()) {
+                    _ = try self.args[1].evaluate(src, allocator, env);
+                }
+            } },
+
             else => unreachable,
         };
     }
@@ -393,6 +399,19 @@ pub const Parser = struct {
                             },
                             else => break :blk error.UnexpectedToken,
                         }
+                    },
+                    else => break :blk error.UnexpectedToken,
+                }
+            },
+            .WHILE => blk: {
+                const root = self.next();
+                switch (self.next().tag) {
+                    .LEFT_PAREN => {
+                        const cond = try self.expression();
+                        break :blk switch (self.next().tag) {
+                            .RIGHT_PAREN => self.create(root, .{ cond, try self.statement() }),
+                            else => error.UnexpectedToken,
+                        };
                     },
                     else => break :blk error.UnexpectedToken,
                 }
