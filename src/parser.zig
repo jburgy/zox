@@ -422,24 +422,19 @@ pub const Parser = struct {
                     else => break :blk error.UnexpectedToken,
                 }
             },
-            .WHILE => blk: {
+            .FOR => blk: {
                 const root = self.next();
                 switch (self.next().tag) {
                     .LEFT_PAREN => {
-                        const first = try self.expression();
+                        const first = try self.statement();
+                        const cond = try self.expression();
                         switch (self.next().tag) {
                             .SEMICOLON => {
-                                const cond = try self.expression();
-                                switch (self.next().tag) {
-                                    .SEMICOLON => {
-                                        const incr = try self.expression();
-                                        break :blk switch (self.next().tag) {
-                                            .RIGHT_PAREN => try self.create(root, .{ first, cond, incr, try self.statement() }),
-                                            else => error.UnexpectedToken,
-                                        };
-                                    },
-                                    else => break :blk error.UnexpectedToken,
-                                }
+                                const incr = try self.expression();
+                                break :blk switch (self.next().tag) {
+                                    .RIGHT_PAREN => try self.create(root, .{ first, cond, incr, try self.statement() }),
+                                    else => error.UnexpectedToken,
+                                };
                             },
                             else => break :blk error.UnexpectedToken,
                         }
