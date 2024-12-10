@@ -277,7 +277,14 @@ pub const Node = struct {
                     else => unreachable,
                 }
             } },
-            .OR => .{ .bool = (try self.args[0].evaluate(src, allocator, env)).truthy() or (try self.args[1].evaluate(src, allocator, env)).truthy() },
+            .OR => blk: {
+                const lhs = try self.args[0].evaluate(src, allocator, env);
+                break :blk if (lhs.truthy()) lhs else try self.args[1].evaluate(src, allocator, env);
+            },
+            .AND => blk: {
+                const lhs = try self.args[0].evaluate(src, allocator, env);
+                break :blk if (!lhs.truthy()) lhs else try self.args[1].evaluate(src, allocator, env);
+            },
             else => unreachable,
         };
     }
