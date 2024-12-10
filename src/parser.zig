@@ -290,8 +290,9 @@ pub const Node = struct {
             .FOR => .{ .nil = {
                 _ = try self.args[0].evaluate(src, allocator, env);
                 while ((try self.args[1].evaluate(src, allocator, env)).truthy()) {
-                    _ = try self.args[3].evaluate(src, allocator, env);
                     _ = try self.args[2].evaluate(src, allocator, env);
+                    if (self.args.len > 3)
+                        _ = try self.args[3].evaluate(src, allocator, env);
                 }
             } },
             else => unreachable,
@@ -422,24 +423,28 @@ pub const Parser = struct {
                     else => break :blk error.UnexpectedToken,
                 }
             },
-            .WHILE => blk: {
+            .FOR => blk: {
                 const root = self.next();
                 switch (self.next().tag) {
                     .LEFT_PAREN => {
-                        const first = try self.expression();
+                        const first = try switch (self.peek().tag) {
+                            .SEMICOLON => self.create(self.next(), .{}),
+                            else => self.statement(),
+                        };
+                        const cond = try self.expression();
                         switch (self.next().tag) {
-                            .SEMICOLON => {
-                                const cond = try self.expression();
-                                switch (self.next().tag) {
-                                    .SEMICOLON => {
-                                        const incr = try self.expression();
-                                        break :blk switch (self.next().tag) {
-                                            .RIGHT_PAREN => try self.create(root, .{ first, cond, incr, try self.statement() }),
-                                            else => error.UnexpectedToken,
-                                        };
-                                    },
-                                    else => break :blk error.UnexpectedToken,
-                                }
+                            .SEMICOLON => switch (self.peek().tag) {
+                                .RIGHT_PAREN => {
+                                    _ = self.next();
+                                    break :blk try self.create(root, .{ first, cond, try self.statement() });
+                                },
+                                else => {
+                                    const incr = try self.expression();
+                                    break :blk switch (self.next().tag) {
+                                        .RIGHT_PAREN => try self.create(root, .{ first, cond, try self.statement(), incr }),
+                                        else => error.UnexpectedToken,
+                                    };
+                                },
                             },
                             else => break :blk error.UnexpectedToken,
                         }
