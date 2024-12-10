@@ -39,6 +39,15 @@ const Value = union(ValueType) {
             // else => unreachable,
         };
     }
+
+    pub fn truthy(value: @This()) bool {
+        return switch (value) {
+            .nil => false,
+            .bool => |b| b,
+            .string => |s| s.len > 0,
+            .number => |x| x != 0.0,
+        };
+    }
 };
 
 pub const ValueMap = std.StringHashMap(Value);
@@ -268,6 +277,7 @@ pub const Node = struct {
                     else => unreachable,
                 }
             } },
+            .OR => .{ .bool = (try self.args[0].evaluate(src, allocator, env)).truthy() or (try self.args[1].evaluate(src, allocator, env)).truthy() },
             else => unreachable,
         };
     }
@@ -396,7 +406,7 @@ pub const Parser = struct {
         var result = try self.equality();
         while (true) {
             result = switch (self.peek().tag) {
-                .EQUAL => try self.create(self.next(), .{ result, try self.expression() }),
+                .EQUAL, .OR, .AND => try self.create(self.next(), .{ result, try self.expression() }),
                 else => break,
             };
         }
