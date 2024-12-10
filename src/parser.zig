@@ -268,16 +268,20 @@ pub const Node = struct {
             } },
             .IF => .{ .nil = {
                 const cond = try self.args[0].evaluate(src, allocator, env);
-                switch (cond) {
-                    .bool => |b| if (b) {
-                        _ = try self.args[1].evaluate(src, allocator, env);
-                    } else if (self.args.len > 2) {
-                        _ = try self.args[2].evaluate(src, allocator, env);
-                    },
-                    else => unreachable,
+                if (cond.truthy()) {
+                    _ = try self.args[1].evaluate(src, allocator, env);
+                } else if (self.args.len > 2) {
+                    _ = try self.args[2].evaluate(src, allocator, env);
                 }
             } },
-            .OR => .{ .bool = (try self.args[0].evaluate(src, allocator, env)).truthy() or (try self.args[1].evaluate(src, allocator, env)).truthy() },
+            .OR => blk: {
+                const lhs = try self.args[0].evaluate(src, allocator, env);
+                break :blk if (lhs.truthy()) lhs else try self.args[1].evaluate(src, allocator, env);
+            },
+            .AND => blk: {
+                const lhs = try self.args[0].evaluate(src, allocator, env);
+                break :blk if (!lhs.truthy()) lhs else try self.args[1].evaluate(src, allocator, env);
+            },
             else => unreachable,
         };
     }
