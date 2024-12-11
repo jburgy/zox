@@ -1,6 +1,7 @@
 const std = @import("std");
 const Tokenizer = @import("tokenizer.zig").Tokenizer;
 const _parser = @import("parser.zig");
+const wrap = _parser.wrap;
 const Parser = _parser.Parser;
 const ValueMap = _parser.ValueMap;
 const ValueMaps = _parser.ValueMaps;
@@ -58,6 +59,7 @@ pub fn main() !u8 {
         var parser = Parser.init(allocator, &tokens);
         var env = ValueMaps{};
         var globals = ValueMaps.Node{ .data = ValueMap.init(allocator) };
+        try globals.data.put("clock", wrap(std.time.timestamp));
         env.prepend(&globals);
         if (if (evaluate) parser.expression() else parser.statements()) |expr| {
             if (parse) {
