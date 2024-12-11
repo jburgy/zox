@@ -22,21 +22,50 @@ const ValueType = enum {
     bool,
     string,
     number,
+    native,
 };
+
+pub fn wrap(comptime function: anytype) Value {
+    const Function = @TypeOf(function);
+    const Args = std.meta.ArgsTuple(Function);
+
+    const function_info = @typeInfo(Function).Fn;
+    const params = function_info.params;
+    const return_info = @typeInfo(function_info.return_type.?);
+
+    return .{ .native = struct {
+        fn call(args: []const Value) Value {
+            const argt: Args = undefined;
+            inline for (params, args, argt) |param, s, *t| {
+                t.* = switch (param.type) {
+                    .Int, .Float => s.number,
+                    else => unreachable,
+                };
+            }
+            const result = @call(.auto, function, argt);
+            return switch (return_info) {
+                .Int => .{ .number = @floatFromInt(result) },
+                .Float => .{ .number = result },
+                else => unreachable,
+            };
+        }
+    }.call };
+}
 
 const Value = union(ValueType) {
     nil: void,
     bool: bool,
     string: []const u8,
     number: f64,
+    native: *const fn ([]const Value) Value,
 
     pub fn format(value: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
         try switch (value) {
             .nil => writer.print("nil", .{}),
-            .bool => writer.print("{any}", .{value.bool}),
-            .string => writer.print("{s}", .{value.string}),
-            .number => writer.print("{d}", .{value.number}),
-            // else => unreachable,
+            .bool => |b| writer.print("{any}", .{b}),
+            .string => |s| writer.print("{s}", .{s}),
+            .number => |d| writer.print("{d}", .{d}),
+            .native => |f| writer.print("{any}", .{f}),
         };
     }
 
@@ -44,7 +73,7 @@ const Value = union(ValueType) {
         return switch (value) {
             .nil => false,
             .bool => |b| b,
-            .string => true,
+            .string, .native => true,
             .number => |x| x != 0.0,
         };
     }
@@ -131,12 +160,7 @@ pub const Node = struct {
                 },
                 else => unreachable,
             },
-            .BANG => .{ .bool = switch (try self.args[0].evaluate(src, allocator, env)) {
-                .nil => true,
-                .bool => |b| b == false,
-                .string => |s| std.mem.eql(u8, s, "") == false,
-                .number => |x| x == 0.0,
-            } },
+            .BANG => .{ .bool = !(try self.args[0].evaluate(src, allocator, env)).truthy() },
             .STAR => switch (try self.args[0].evaluate(src, allocator, env)) {
                 .number => |lhs| switch (try self.args[1].evaluate(src, allocator, env)) {
                     .number => |rhs| .{ .number = lhs * rhs },
@@ -295,6 +319,16 @@ pub const Node = struct {
                         _ = try self.args[3].evaluate(src, allocator, env);
                 }
             } },
+            .RIGHT_PAREN => blk: {
+                var args: []Value = try allocator.alloc(Value, self.args.len);
+                defer allocator.free(args);
+                for (self.args, args) |node, *value|
+                    value.* = try node.evaluate(src, allocator, env);
+                break :blk switch (args[0]) {
+                    .native => |func| func(args[1..]),
+                    else => unreachable,
+                };
+            },
             else => unreachable,
         };
     }
@@ -520,8 +554,39 @@ pub const Parser = struct {
     fn unary(self: *Parser) ParseError!*Node {
         return switch (self.peek().tag) {
             .BANG, .MINUS => self.create(self.next(), .{try self.unary()}),
-            else => self.primary(),
+            else => self.call(),
         };
+    }
+
+    fn call(self: *Parser) ParseError!*Node {
+        const result = try self.primary();
+        return switch (self.peek().tag) {
+            .LEFT_PAREN => try self.finishCall(result),
+            else => result,
+        };
+    }
+
+    fn finishCall(self: *Parser, func: *Node) ParseError!*Node {
+        var args = std.ArrayList(*Node).init(self.allocator);
+        errdefer args.deinit();
+
+        _ = self.next(); // consume '('
+        try args.append(func);
+        while (true) {
+            switch (self.peek().tag) {
+                .RIGHT_PAREN => break,
+                else => {
+                    try args.append(try self.expression());
+                    switch (self.peek().tag) {
+                        .COMMA => _ = self.next(),
+                        else => {},
+                    }
+                },
+            }
+        }
+        const node = try self.allocator.create(Node);
+        node.* = .{ .token = self.next(), .args = try args.toOwnedSlice() };
+        return node;
     }
 
     fn primary(self: *Parser) ParseError!*Node {
