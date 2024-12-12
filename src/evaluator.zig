@@ -91,7 +91,7 @@ pub const Evaluator = struct {
         return env;
     }
 
-    pub fn evaluate(self: @This(), node: *Node, env: *ValueMaps) !Value {
+    pub fn evaluate(self: @This(), node: Node, env: *ValueMaps) !Value {
         const slice = self.source[node.token.loc.start..node.token.loc.end];
         return switch (node.token.tag) {
             .FALSE => .{ .bool = false },
