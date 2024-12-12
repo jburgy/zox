@@ -1,10 +1,7 @@
 const std = @import("std");
 const Tokenizer = @import("tokenizer.zig").Tokenizer;
-const _parser = @import("parser.zig");
-const wrap = _parser.wrap;
-const Parser = _parser.Parser;
-const ValueMap = _parser.ValueMap;
-const ValueMaps = _parser.ValueMaps;
+const Parser = @import("parser.zig").Parser;
+const Evaluator = @import("evaluator.zig").Evaluator;
 
 const stdout = std.io.getStdOut().writer();
 
@@ -57,14 +54,12 @@ pub fn main() !u8 {
     } else if ((parse or evaluate or run) and file_contents.len > 0) {
         var tokens = Tokenizer.init(file_contents);
         var parser = Parser.init(allocator, &tokens);
-        var env = ValueMaps{};
-        var globals = ValueMaps.Node{ .data = ValueMap.init(allocator) };
-        try globals.data.put("clock", wrap(std.time.timestamp));
-        env.prepend(&globals);
+        var evaluator = Evaluator.init(allocator, file_contents);
+        var env = try evaluator.createEnv();
         if (if (evaluate) parser.expression() else parser.statements()) |expr| {
             if (parse) {
                 try expr.emit(file_contents, stdout);
-            } else if (expr.evaluate(file_contents, allocator, &env)) |value| {
+            } else if (evaluator.evaluate(expr, &env)) |value| {
                 if (evaluate)
                     try stdout.print("{any}", .{value});
             } else |err| {
