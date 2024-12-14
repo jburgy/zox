@@ -10,7 +10,7 @@ const ParseError = error{
 
 pub const Node = struct {
     token: Token,
-    args: []const Node,
+    args: []const *const Node,
 
     pub fn emit(self: @This(), src: []const u8, writer: anytype) !void {
         const slice = src[self.token.loc.start..self.token.loc.end];
@@ -75,9 +75,17 @@ pub const Parser = struct {
         return token;
     }
 
-    pub fn statements(self: *Parser) ParseError!Node {
-        var stmts = std.ArrayList(Node).init(self.allocator);
-        errdefer stmts.deinit();
+    fn create(self: *Parser, token: Token, args: []const *const Node) !*Node {
+        const node = try self.allocator.create(Node);
+        errdefer self.allocator.destroy(node);
+        node.* = .{ .token = token, .args = try self.allocator.dupe(*const Node, args) };
+        return node;
+    }
+
+    pub fn statements(self: *Parser) ParseError!*const Node {
+        const start = self.tokens.buffer.len;
+        var stmts = std.ArrayList(*const Node).init(self.allocator);
+        defer stmts.deinit();
 
         while (true) {
             switch (self.peek().tag) {
@@ -85,28 +93,28 @@ pub const Parser = struct {
                 else => try stmts.append(try self.statement()),
             }
         }
-        return Node{
-            .token = .{
+        return try self.create(
+            .{
                 .tag = .SEMICOLON,
-                .loc = .{ .start = 0, .end = self.tokens.buffer.len },
+                .loc = .{ .start = start, .end = self.tokens.buffer.len },
             },
-            .args = try stmts.toOwnedSlice(),
-        };
+            stmts.items,
+        );
     }
 
-    fn statement(self: *Parser) ParseError!Node {
+    fn statement(self: *Parser) ParseError!*const Node {
         const token = self.peek();
         const stmt = switch (token.tag) {
-            .PRINT => Node{ .token = self.next(), .args = &[_]Node{try self.expression()} },
+            .PRINT => self.create(self.next(), &[_]*const Node{try self.expression()}),
             .VAR => blk: {
                 _ = self.next();
                 const idToken = self.peek();
                 switch (idToken.tag) {
                     .IDENTIFIER => {
-                        const lhs = Node{ .token = self.next(), .args = &[_]Node{} };
+                        const lhs = try self.create(self.next(), &[_]*const Node{});
                         break :blk switch (self.next().tag) {
-                            .EQUAL => Node{ .token = token, .args = &[_]Node{ lhs, try self.expression() } },
-                            .SEMICOLON => Node{ .token = token, .args = &[_]Node{lhs} },
+                            .EQUAL => try self.create(token, &[_]*const Node{ lhs, try self.expression() }),
+                            .SEMICOLON => try self.create(token, &[_]*const Node{lhs}),
                             else => unreachable,
                         };
                     },
@@ -114,7 +122,7 @@ pub const Parser = struct {
                 }
             },
             .LEFT_BRACE => blk: {
-                const result = Node{ .token = self.next(), .args = &[_]Node{try self.statements()} };
+                const result = self.create(self.next(), &[_]*const Node{try self.statements()});
                 break :blk switch (self.next().tag) {
                     .RIGHT_BRACE => result,
                     else => error.UnexpectedToken,
@@ -131,9 +139,9 @@ pub const Parser = struct {
                                 switch (self.peek().tag) {
                                     .ELSE => {
                                         _ = self.next();
-                                        break :blk Node{ .token = root, .args = &[_]Node{ cond, head, try self.statement() } };
+                                        break :blk self.create(root, &[_]*const Node{ cond, head, try self.statement() });
                                     },
-                                    else => break :blk Node{ .token = root, .args = &[_]Node{ cond, head } },
+                                    else => break :blk self.create(root, &[_]*const Node{ cond, head }),
                                 }
                             },
                             else => break :blk error.UnexpectedToken,
@@ -148,7 +156,7 @@ pub const Parser = struct {
                     .LEFT_PAREN => {
                         const cond = try self.expression();
                         break :blk switch (self.next().tag) {
-                            .RIGHT_PAREN => Node{ .token = root, .args = &[_]Node{ cond, try self.statement() } },
+                            .RIGHT_PAREN => self.create(root, &[_]*const Node{ cond, try self.statement() }),
                             else => error.UnexpectedToken,
                         };
                     },
@@ -160,7 +168,7 @@ pub const Parser = struct {
                 switch (self.next().tag) {
                     .LEFT_PAREN => {
                         const first = try switch (self.peek().tag) {
-                            .SEMICOLON => Node{ .token = self.next(), .args = &[_]Node{} },
+                            .SEMICOLON => try self.create(self.next(), &[_]*const Node{}),
                             .LEFT_BRACE => break :blk error.UnexpectedToken,
                             else => self.statement(),
                         };
@@ -169,12 +177,12 @@ pub const Parser = struct {
                             .SEMICOLON => switch (self.peek().tag) {
                                 .RIGHT_PAREN => {
                                     _ = self.next();
-                                    break :blk Node{ .token = root, .args = &[_]Node{ first, cond, try self.statement() } };
+                                    break :blk try self.create(root, &[_]*const Node{ first, cond, try self.statement() });
                                 },
                                 else => {
                                     const incr = try self.expression();
                                     break :blk switch (self.next().tag) {
-                                        .RIGHT_PAREN => Node{ .token = root, .args = &[_]Node{ first, cond, try self.statement(), incr } },
+                                        .RIGHT_PAREN => try self.create(root, &[_]*const Node{ first, cond, try self.statement(), incr }),
                                         else => error.UnexpectedToken,
                                     };
                                 },
@@ -187,11 +195,11 @@ pub const Parser = struct {
             },
             .FUN => blk: {
                 const root = self.next();
-                var args = std.ArrayList(Node).init(self.allocator);
+                var args = std.ArrayList(*const Node).init(self.allocator);
                 errdefer args.deinit();
 
                 switch (self.peek().tag) {
-                    .IDENTIFIER => try args.append(Node{ .token = self.next(), .args = &[_]Node{} }),
+                    .IDENTIFIER => try args.append(try self.create(self.next(), &[_]*const Node{})),
                     else => break :blk error.UnexpectedToken,
                 }
                 switch (self.next().tag) {
@@ -205,7 +213,7 @@ pub const Parser = struct {
                             break;
                         },
                         .IDENTIFIER => {
-                            try args.append(Node{ .token = self.next(), .args = &[_]Node{} });
+                            try args.append(try self.create(self.next(), &[_]*const Node{}));
                             switch (self.next().tag) {
                                 .COMMA => break,
                                 .RIGHT_PAREN => break,
@@ -220,7 +228,7 @@ pub const Parser = struct {
                     else => break :blk error.UnexpectedToken,
                 }
                 break :blk switch (self.next().tag) {
-                    .RIGHT_BRACE => Node{ .token = root, .args = try args.toOwnedSlice() },
+                    .RIGHT_BRACE => try self.create(root, args.items),
                     else => error.UnexpectedToken,
                 };
             },
@@ -233,69 +241,69 @@ pub const Parser = struct {
         return stmt;
     }
 
-    pub fn expression(self: *Parser) ParseError!Node {
+    pub fn expression(self: *Parser) ParseError!*const Node {
         var result = try self.equality();
         while (true) {
             result = switch (self.peek().tag) {
-                .EQUAL, .OR, .AND => Node{ .token = self.next(), .args = &[_]Node{ result, try self.expression() } },
+                .EQUAL, .OR, .AND => try self.create(self.next(), &[_]*const Node{ result, try self.expression() }),
                 else => break,
             };
         }
         return result;
     }
 
-    fn equality(self: *Parser) ParseError!Node {
+    fn equality(self: *Parser) ParseError!*const Node {
         var result = try self.comparison();
         while (true) {
             result = switch (self.peek().tag) {
-                .EQUAL_EQUAL, .BANG_EQUAL => Node{ .token = self.next(), .args = &[_]Node{ result, try self.comparison() } },
+                .EQUAL_EQUAL, .BANG_EQUAL => try self.create(self.next(), &[_]*const Node{ result, try self.comparison() }),
                 else => break,
             };
         }
         return result;
     }
 
-    fn comparison(self: *Parser) ParseError!Node {
+    fn comparison(self: *Parser) ParseError!*const Node {
         var result = try self.term();
         while (true) {
             result = switch (self.peek().tag) {
-                .LESS, .LESS_EQUAL, .GREATER, .GREATER_EQUAL => Node{ .token = self.next(), .args = &[_]Node{ result, try self.term() } },
+                .LESS, .LESS_EQUAL, .GREATER, .GREATER_EQUAL => try self.create(self.next(), &[_]*const Node{ result, try self.term() }),
                 else => break,
             };
         }
         return result;
     }
 
-    fn term(self: *Parser) ParseError!Node {
+    fn term(self: *Parser) ParseError!*const Node {
         var result = try self.factor();
         while (true) {
             result = switch (self.peek().tag) {
-                .MINUS, .PLUS => Node{ .token = self.next(), .args = &[_]Node{ result, try self.factor() } },
+                .MINUS, .PLUS => try self.create(self.next(), &[_]*const Node{ result, try self.factor() }),
                 else => break,
             };
         }
         return result;
     }
 
-    fn factor(self: *Parser) ParseError!Node {
+    fn factor(self: *Parser) ParseError!*const Node {
         var result = try self.unary();
         while (true) {
             result = switch (self.peek().tag) {
-                .STAR, .SLASH => Node{ .token = self.next(), .args = &[_]Node{ result, try self.unary() } },
+                .STAR, .SLASH => try self.create(self.next(), &[_]*const Node{ result, try self.unary() }),
                 else => break,
             };
         }
         return result;
     }
 
-    fn unary(self: *Parser) ParseError!Node {
+    fn unary(self: *Parser) ParseError!*const Node {
         return switch (self.peek().tag) {
-            .BANG, .MINUS => Node{ .token = self.next(), .args = &[_]Node{try self.unary()} },
+            .BANG, .MINUS => self.create(self.next(), &[_]*const Node{try self.unary()}),
             else => self.call(),
         };
     }
 
-    fn call(self: *Parser) ParseError!Node {
+    fn call(self: *Parser) ParseError!*const Node {
         const result = try self.primary();
         return switch (self.peek().tag) {
             .LEFT_PAREN => try self.finishCall(result),
@@ -303,8 +311,8 @@ pub const Parser = struct {
         };
     }
 
-    fn finishCall(self: *Parser, func: Node) ParseError!Node {
-        var args = std.ArrayList(Node).init(self.allocator);
+    fn finishCall(self: *Parser, func: *const Node) ParseError!*const Node {
+        var args = std.ArrayList(*const Node).init(self.allocator);
         errdefer args.deinit();
 
         _ = self.next(); // consume '('
@@ -321,25 +329,25 @@ pub const Parser = struct {
                 },
             }
         }
-        return Node{ .token = self.next(), .args = try args.toOwnedSlice() };
+        return self.create(self.next(), args.items);
     }
 
-    fn primary(self: *Parser) ParseError!Node {
+    fn primary(self: *Parser) ParseError!*const Node {
         const token = self.peek();
         return switch (token.tag) {
             .STRING => switch (self.tokens.buffer[token.loc.end - 1]) {
-                '"' => Node{ .token = self.next(), .args = &[_]Node{} },
+                '"' => self.create(self.next(), &[_]*const Node{}),
                 else => error.UnexpectedToken,
             },
-            .NUMBER, .FALSE, .NIL, .TRUE => Node{ .token = self.next(), .args = &[_]Node{} },
+            .NUMBER, .FALSE, .NIL, .TRUE => self.create(self.next(), &[_]*const Node{}),
             .LEFT_PAREN => blk: {
-                const result = Node{ .token = self.next(), .args = &[_]Node{try self.expression()} };
+                const result = self.create(self.next(), &[_]*const Node{try self.expression()});
                 break :blk switch (self.next().tag) {
                     .RIGHT_PAREN => result,
                     else => error.UnexpectedToken,
                 };
             },
-            .IDENTIFIER => Node{ .token = self.next(), .args = &[_]Node{} },
+            .IDENTIFIER => self.create(self.next(), &[_]*const Node{}),
             else => error.UnexpectedToken,
         };
     }

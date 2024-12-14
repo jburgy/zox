@@ -1,1 +1,2 @@
-print clock() + 75;
+fun foo() {}
+print foo;

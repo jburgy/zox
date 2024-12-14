@@ -51,7 +51,7 @@ const Value = union(ValueType) {
     string: []const u8,
     number: f64,
     native: *const fn ([]const Value) Value,
-    function: []const Node,
+    function: []const *const Node,
 
     pub fn format(value: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
         try switch (value) {
@@ -94,7 +94,7 @@ pub const Evaluator = struct {
         return env;
     }
 
-    pub fn evaluate(self: @This(), node: Node, env: *ValueMaps) !Value {
+    pub fn evaluate(self: @This(), node: *const Node, env: *ValueMaps) !Value {
         const slice = node.token.source(self.source);
         return switch (node.token.tag) {
             .FALSE => .{ .bool = false },
@@ -202,7 +202,13 @@ pub const Evaluator = struct {
                 },
                 else => true,
             } },
-            .PRINT => .{ .nil = try stdout.print("{any}\n", .{try self.evaluate(node.args[0], env)}) },
+            .PRINT => .{ .nil = {
+                const value = try self.evaluate(node.args[0], env);
+                try switch (value) {
+                    .function => |args| stdout.print("<fn {s}>", .{args[0].token.source(self.source)}),
+                    else => stdout.print("{any}\n", .{value}),
+                };
+            } },
             .SEMICOLON => .{ .nil = for (node.args) |arg| {
                 _ = try self.evaluate(arg, env);
             } },
@@ -316,7 +322,7 @@ pub const Evaluator = struct {
                 if (env.first) |scope|
                     try scope.data.put(
                         node.args[0].token.source(self.source),
-                        Value{ .function = try self.allocator.dupe(Node, node.args) },
+                        .{ .function = node.args },
                     )
                 else
                     unreachable;
