@@ -1,2 +1,2 @@
-fun f1(a) { print a; }
-f1(20);
+fun foo(a) { print a; }
+foo(22);
