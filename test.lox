@@ -1,1 +1,2 @@
-print clock() + 75;
+fun f1(a) { print a; }
+f1(20);
