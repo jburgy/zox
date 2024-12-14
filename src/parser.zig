@@ -212,14 +212,11 @@ pub const Parser = struct {
                             _ = self.next();
                             break;
                         },
-                        .IDENTIFIER => {
-                            try args.append(try self.create(self.next(), &[_]*const Node{}));
-                            switch (self.next().tag) {
-                                .COMMA => break,
-                                .RIGHT_PAREN => break,
-                                else => break :blk error.UnexpectedToken,
-                            }
-                        },
+                        .IDENTIFIER => try args.append(try self.create(self.next(), &[_]*const Node{})),
+                        else => break :blk error.UnexpectedToken,
+                    }
+                    switch (self.next().tag) {
+                        .COMMA, .RIGHT_PAREN => {},
                         else => break :blk error.UnexpectedToken,
                     }
                 }
@@ -320,13 +317,12 @@ pub const Parser = struct {
         while (true) {
             switch (self.peek().tag) {
                 .RIGHT_PAREN => break,
-                else => {
-                    try args.append(try self.expression());
-                    switch (self.peek().tag) {
-                        .COMMA => _ = self.next(),
-                        else => {},
-                    }
-                },
+                else => {},
+            }
+            try args.append(try self.expression());
+            switch (self.peek().tag) {
+                .COMMA => _ = self.next(),
+                else => {},
             }
         }
         return self.create(self.next(), args.items);
