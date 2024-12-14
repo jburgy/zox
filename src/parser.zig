@@ -215,9 +215,9 @@ pub const Parser = struct {
                         .IDENTIFIER => try args.append(try self.create(self.next(), &[_]*const Node{})),
                         else => break :blk error.UnexpectedToken,
                     }
-                    switch (self.next().tag) {
-                        .COMMA, .RIGHT_PAREN => {},
-                        else => break :blk error.UnexpectedToken,
+                    switch (self.peek().tag) {
+                        .COMMA => _ = self.next(),
+                        else => {},
                     }
                 }
                 switch (self.next().tag) {

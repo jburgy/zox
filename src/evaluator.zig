@@ -293,23 +293,20 @@ pub const Evaluator = struct {
                 }
             } },
             .RIGHT_PAREN => blk: {
-                const func = try self.evaluate(node.args[0], env);
-                const m = node.args.len - 1;
-                const args: []Value = try self.allocator.alloc(Value, m);
+                const args: []Value = try self.allocator.alloc(Value, node.args.len);
                 defer self.allocator.free(args);
-                if (m > 1) {
-                    for (node.args[1..m], args) |n, *value|
-                        value.* = try self.evaluate(n, env);
-                }
-                switch (func) {
-                    .native => |f| break :blk f(args),
+                for (node.args, args) |n, *value|
+                    value.* = try self.evaluate(n, env);
+                switch (args[0]) {
+                    .native => |f| break :blk f(args[1..]),
                     .function => |nodes| {
                         var scope = ValueMaps.Node{ .data = ValueMap.init(self.allocator) };
                         defer scope.data.deinit();
                         env.prepend(&scope);
-                        if (m > 1)
-                            for (nodes[1..m], args) |param, arg| try scope.data.put(param.token.source(self.source), arg);
-                        break :blk self.evaluate(nodes[m + 1], env);
+                        for (nodes[1..args.len], args[1..]) |param, arg| {
+                            try scope.data.put(param.token.source(self.source), arg);
+                        }
+                        break :blk self.evaluate(nodes[args.len], env);
                     },
                     else => unreachable,
                 }
