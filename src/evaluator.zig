@@ -294,11 +294,7 @@ pub const Evaluator = struct {
             } },
             .RIGHT_PAREN => blk: {
                 const func = try self.evaluate(node.args[0], env);
-                const m = switch (func) {
-                    .native => node.args.len,
-                    .function => node.args.len - 1,
-                    else => unreachable,
-                };
+                const m = node.args.len - 1;
                 const args: []Value = try self.allocator.alloc(Value, m);
                 defer self.allocator.free(args);
                 if (m > 1) {
