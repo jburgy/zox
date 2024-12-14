@@ -15,6 +15,7 @@ const ValueType = enum {
     string,
     number,
     native,
+    function,
 };
 
 fn wrap(comptime function: anytype) Value {
@@ -50,6 +51,7 @@ const Value = union(ValueType) {
     string: []const u8,
     number: f64,
     native: *const fn ([]const Value) Value,
+    function: []const Node,
 
     pub fn format(value: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
         try switch (value) {
@@ -58,6 +60,7 @@ const Value = union(ValueType) {
             .string => |s| writer.print("{s}", .{s}),
             .number => |d| writer.print("{d}", .{d}),
             .native => |f| writer.print("{any}", .{f}),
+            .function => |f| writer.print("<fn {any}>", .{f[0].token}),
         };
     }
 
@@ -65,7 +68,7 @@ const Value = union(ValueType) {
         return switch (value) {
             .nil => false,
             .bool => |b| b,
-            .string, .native => true,
+            .string, .native, .function => true,
             .number => |x| x != 0.0,
         };
     }
@@ -92,7 +95,7 @@ pub const Evaluator = struct {
     }
 
     pub fn evaluate(self: @This(), node: Node, env: *ValueMaps) !Value {
-        const slice = self.source[node.token.loc.start..node.token.loc.end];
+        const slice = node.token.source(self.source);
         return switch (node.token.tag) {
             .FALSE => .{ .bool = false },
             .NIL => .{ .nil = void{} },
@@ -204,10 +207,9 @@ pub const Evaluator = struct {
                 _ = try self.evaluate(arg, env);
             } },
             .VAR => .{ .nil = {
-                const loc = node.args[0].token.loc;
                 if (env.first) |n|
                     try n.data.put(
-                        self.source[loc.start..loc.end],
+                        node.args[0].token.source(self.source),
                         switch (node.args.len) {
                             2 => try self.evaluate(node.args[1], env),
                             else => .{ .nil = {} },
@@ -232,8 +234,7 @@ pub const Evaluator = struct {
             },
             .EQUAL => blk: {
                 const lhs = node.args[0].token;
-                const loc = lhs.loc;
-                const key = self.source[loc.start..loc.end];
+                const key = lhs.source(self.source);
                 var it = env.first;
                 while (it) |n| : (it = n.next) {
                     var scope = n.data;
@@ -245,7 +246,7 @@ pub const Evaluator = struct {
                 }
                 std.debug.print(
                     "Undefined variable '{s}'.\n[Line {d}]",
-                    .{ lhs.source(self.source), lhs.line(self.source) },
+                    .{ key, lhs.line(self.source) },
                 );
                 break :blk error.UndefinedVariable;
             },
@@ -286,15 +287,40 @@ pub const Evaluator = struct {
                 }
             } },
             .RIGHT_PAREN => blk: {
-                var args: []Value = try self.allocator.alloc(Value, node.args.len);
-                defer self.allocator.free(args);
-                for (node.args, args) |n, *value|
-                    value.* = try self.evaluate(n, env);
-                break :blk switch (args[0]) {
-                    .native => |func| func(args[1..]),
+                const func = try self.evaluate(node.args[0], env);
+                const m = switch (func) {
+                    .native => node.args.len,
+                    .function => node.args.len - 1,
                     else => unreachable,
                 };
+                const args: []Value = try self.allocator.alloc(Value, m);
+                defer self.allocator.free(args);
+                if (m > 1) {
+                    for (node.args[1..m], args) |n, *value|
+                        value.* = try self.evaluate(n, env);
+                }
+                switch (func) {
+                    .native => |f| break :blk f(args),
+                    .function => |nodes| {
+                        var scope = ValueMaps.Node{ .data = ValueMap.init(self.allocator) };
+                        defer scope.data.deinit();
+                        env.prepend(&scope);
+                        if (m > 1)
+                            for (nodes[1..m], args) |param, arg| try scope.data.put(param.token.source(self.source), arg);
+                        break :blk self.evaluate(nodes[m + 1], env);
+                    },
+                    else => unreachable,
+                }
             },
+            .FUN => .{ .nil = {
+                if (env.first) |scope|
+                    try scope.data.put(
+                        node.args[0].token.source(self.source),
+                        Value{ .function = try self.allocator.dupe(Node, node.args) },
+                    )
+                else
+                    unreachable;
+            } },
             else => unreachable,
         };
     }

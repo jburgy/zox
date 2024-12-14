@@ -185,6 +185,45 @@ pub const Parser = struct {
                     else => break :blk error.UnexpectedToken,
                 }
             },
+            .FUN => blk: {
+                const root = self.next();
+                var args = std.ArrayList(Node).init(self.allocator);
+                errdefer args.deinit();
+
+                switch (self.peek().tag) {
+                    .IDENTIFIER => try args.append(Node{ .token = self.next(), .args = &[_]Node{} }),
+                    else => break :blk error.UnexpectedToken,
+                }
+                switch (self.next().tag) {
+                    .LEFT_PAREN => {},
+                    else => break :blk error.UnexpectedToken,
+                }
+                while (true) {
+                    switch (self.peek().tag) {
+                        .RIGHT_PAREN => {
+                            _ = self.next();
+                            break;
+                        },
+                        .IDENTIFIER => {
+                            try args.append(Node{ .token = self.next(), .args = &[_]Node{} });
+                            switch (self.next().tag) {
+                                .COMMA => break,
+                                .RIGHT_PAREN => break,
+                                else => break :blk error.UnexpectedToken,
+                            }
+                        },
+                        else => break :blk error.UnexpectedToken,
+                    }
+                }
+                switch (self.next().tag) {
+                    .LEFT_BRACE => try args.append(try self.statements()),
+                    else => break :blk error.UnexpectedToken,
+                }
+                break :blk switch (self.next().tag) {
+                    .RIGHT_BRACE => Node{ .token = root, .args = try args.toOwnedSlice() },
+                    else => error.UnexpectedToken,
+                };
+            },
             else => try self.expression(),
         };
         switch (self.peek().tag) {
