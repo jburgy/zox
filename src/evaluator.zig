@@ -102,7 +102,7 @@ pub const Evaluator = struct {
             .TRUE => .{ .bool = true },
             .STRING => if (slice[slice.len - 1] == '"') .{ .string = slice[1 .. slice.len - 1] } else error.UnexpectedToken,
             .NUMBER => .{ .number = try std.fmt.parseFloat(f64, slice) },
-            .LEFT_PAREN => try self.evaluate(node.args[0], env),
+            .LEFT_PAREN, .RETURN => try self.evaluate(node.args[0], env),
             .MINUS => if (node.args.len == 1) switch (try self.evaluate(node.args[0], env)) {
                 .number => |lhs| .{ .number = -lhs },
                 else => error.OperandMustBeANumber,
@@ -209,9 +209,15 @@ pub const Evaluator = struct {
                     else => stdout.print("{any}\n", .{value}),
                 };
             } },
-            .SEMICOLON => .{ .nil = for (node.args) |arg| {
-                _ = try self.evaluate(arg, env);
-            } },
+            .SEMICOLON => blk: {
+                for (node.args) |arg| {
+                    switch (try self.evaluate(arg, env)) {
+                        .nil => {},
+                        else => |v| break :blk v,
+                    }
+                }
+                break :blk .{ .nil = {} };
+            },
             .VAR => .{ .nil = {
                 if (env.first) |n|
                     try n.data.put(
@@ -256,21 +262,20 @@ pub const Evaluator = struct {
                 );
                 break :blk error.UndefinedVariable;
             },
-            .LEFT_BRACE => .{ .nil = {
+            .LEFT_BRACE => blk: {
                 var scope = ValueMaps.Node{ .data = ValueMap.init(self.allocator) };
                 defer scope.data.deinit();
                 env.prepend(&scope);
-                _ = try self.evaluate(node.args[0], env);
+                const res = try self.evaluate(node.args[0], env);
                 _ = env.popFirst();
-            } },
-            .IF => .{ .nil = {
-                const cond = try self.evaluate(node.args[0], env);
-                if (cond.truthy()) {
-                    _ = try self.evaluate(node.args[1], env);
-                } else if (node.args.len > 2) {
-                    _ = try self.evaluate(node.args[2], env);
-                }
-            } },
+                break :blk res;
+            },
+            .IF => if ((try self.evaluate(node.args[0], env)).truthy())
+                try self.evaluate(node.args[1], env)
+            else if (node.args.len > 2)
+                try self.evaluate(node.args[2], env)
+            else
+                .{ .nil = {} },
             .OR => blk: {
                 const lhs = try self.evaluate(node.args[0], env);
                 break :blk if (lhs.truthy()) lhs else try self.evaluate(node.args[1], env);
@@ -279,19 +284,27 @@ pub const Evaluator = struct {
                 const lhs = try self.evaluate(node.args[0], env);
                 break :blk if (!lhs.truthy()) lhs else try self.evaluate(node.args[1], env);
             },
-            .WHILE => .{ .nil = {
+            .WHILE => blk: {
                 while ((try self.evaluate(node.args[0], env)).truthy()) {
-                    _ = try self.evaluate(node.args[1], env);
+                    switch (try self.evaluate(node.args[1], env)) {
+                        .nil => {},
+                        else => |v| break :blk v,
+                    }
                 }
-            } },
-            .FOR => .{ .nil = {
+                break :blk .{ .nil = {} };
+            },
+            .FOR => blk: {
                 _ = try self.evaluate(node.args[0], env);
                 while ((try self.evaluate(node.args[1], env)).truthy()) {
-                    _ = try self.evaluate(node.args[2], env);
+                    switch (try self.evaluate(node.args[2], env)) {
+                        .nil => {},
+                        else => |v| break :blk v,
+                    }
                     if (node.args.len > 3)
                         _ = try self.evaluate(node.args[3], env);
                 }
-            } },
+                break :blk .{ .nil = {} };
+            },
             .RIGHT_PAREN => blk: {
                 const args: []Value = try self.allocator.alloc(Value, node.args.len);
                 defer self.allocator.free(args);
