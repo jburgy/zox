@@ -105,7 +105,7 @@ pub const Parser = struct {
     fn statement(self: *Parser) ParseError!*const Node {
         const token = self.peek();
         const stmt = switch (token.tag) {
-            .PRINT => self.create(self.next(), &[_]*const Node{try self.expression()}),
+            .PRINT, .RETURN => self.create(self.next(), &[_]*const Node{try self.expression()}),
             .VAR => blk: {
                 _ = self.next();
                 const idToken = self.peek();
