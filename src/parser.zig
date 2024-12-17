@@ -105,7 +105,7 @@ pub const Parser = struct {
     fn statement(self: *Parser) ParseError!*const Node {
         const token = self.peek();
         const stmt = switch (token.tag) {
-            .PRINT, .RETURN => self.create(self.next(), &[_]*const Node{try self.expression()}),
+            .PRINT => self.create(self.next(), &[_]*const Node{try self.expression()}),
             .VAR => blk: {
                 _ = self.next();
                 const idToken = self.peek();
@@ -232,6 +232,10 @@ pub const Parser = struct {
                     else => error.UnexpectedToken,
                 };
             },
+            .RETURN => self.create(self.next(), switch (self.peek().tag) {
+                .SEMICOLON => &[_]*const Node{},
+                else => &[_]*const Node{try self.expression()},
+            }),
             else => try self.expression(),
         };
         switch (self.peek().tag) {

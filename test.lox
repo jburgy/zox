@@ -1,2 +1,6 @@
-fun foo(a) { print a; }
-foo(22);
+fun f() {
+  return;
+  print "bad";
+}
+
+print f();
