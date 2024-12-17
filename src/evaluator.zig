@@ -319,7 +319,9 @@ pub const Evaluator = struct {
                         for (nodes[1..args.len], args[1..]) |param, arg| {
                             try scope.data.put(param.token.source(self.source), arg);
                         }
-                        break :blk self.evaluate(nodes[args.len], env);
+                        const result = self.evaluate(nodes[args.len], env);
+                        _ = env.popFirst();
+                        break :blk result;
                     },
                     else => unreachable,
                 }
