@@ -4,9 +4,12 @@ const Node = @import("parser.zig").Node;
 const stdout = std.io.getStdOut().writer();
 
 const EvaluationError = error{
+    InvalidCharacter,
+    OutOfMemory,
     OperandMustBeANumber,
     OperandsMustBeNumbers,
     UndefinedVariable,
+    EarlyExit,
 };
 
 const ValueType = enum {
@@ -94,15 +97,15 @@ pub const Evaluator = struct {
         return env;
     }
 
-    pub fn evaluate(self: @This(), node: *const Node, env: *ValueMaps) !Value {
+    pub fn evaluate(self: @This(), node: *const Node, env: *ValueMaps) EvaluationError!Value {
         const slice = node.token.source(self.source);
         return switch (node.token.tag) {
             .FALSE => .{ .bool = false },
             .NIL => .{ .nil = void{} },
             .TRUE => .{ .bool = true },
-            .STRING => if (slice[slice.len - 1] == '"') .{ .string = slice[1 .. slice.len - 1] } else error.UnexpectedToken,
+            .STRING => if (slice[slice.len - 1] == '"') .{ .string = slice[1 .. slice.len - 1] } else error.InvalidCharacter,
             .NUMBER => .{ .number = try std.fmt.parseFloat(f64, slice) },
-            .LEFT_PAREN, .RETURN => try self.evaluate(node.args[0], env),
+            .LEFT_PAREN => try self.evaluate(node.args[0], env),
             .MINUS => if (node.args.len == 1) switch (try self.evaluate(node.args[0], env)) {
                 .number => |lhs| .{ .number = -lhs },
                 else => error.OperandMustBeANumber,
@@ -204,31 +207,23 @@ pub const Evaluator = struct {
             } },
             .PRINT => .{ .nil = {
                 const value = try self.evaluate(node.args[0], env);
-                try switch (value) {
-                    .function => |args| stdout.print("<fn {s}>", .{args[0].token.source(self.source)}),
-                    else => stdout.print("{any}\n", .{value}),
-                };
+                switch (value) {
+                    .function => |args| stdout.print("<fn {s}>", .{args[0].token.source(self.source)}) catch {},
+                    else => stdout.print("{any}\n", .{value}) catch {},
+                }
             } },
             .SEMICOLON => blk: {
-                for (node.args) |arg| {
-                    switch (try self.evaluate(arg, env)) {
-                        .nil => {},
-                        else => |v| break :blk v,
-                    }
-                }
+                for (node.args) |arg| _ = try self.evaluate(arg, env);
                 break :blk .{ .nil = {} };
             },
             .VAR => .{ .nil = {
-                if (env.first) |n|
-                    try n.data.put(
-                        node.args[0].token.source(self.source),
-                        switch (node.args.len) {
-                            2 => try self.evaluate(node.args[1], env),
-                            else => .{ .nil = {} },
-                        },
-                    )
-                else
-                    unreachable;
+                try env.first.?.data.put(
+                    node.args[0].token.source(self.source),
+                    switch (node.args.len) {
+                        2 => try self.evaluate(node.args[1], env),
+                        else => .{ .nil = {} },
+                    },
+                );
             } },
             .IDENTIFIER => blk: {
                 var it = env.first;
@@ -266,8 +261,8 @@ pub const Evaluator = struct {
                 var scope = ValueMaps.Node{ .data = ValueMap.init(self.allocator) };
                 defer scope.data.deinit();
                 env.prepend(&scope);
+                defer _ = env.popFirst();
                 const res = try self.evaluate(node.args[0], env);
-                _ = env.popFirst();
                 break :blk res;
             },
             .IF => if ((try self.evaluate(node.args[0], env)).truthy())
@@ -286,20 +281,14 @@ pub const Evaluator = struct {
             },
             .WHILE => blk: {
                 while ((try self.evaluate(node.args[0], env)).truthy()) {
-                    switch (try self.evaluate(node.args[1], env)) {
-                        .nil => {},
-                        else => |v| break :blk v,
-                    }
+                    _ = try self.evaluate(node.args[1], env);
                 }
                 break :blk .{ .nil = {} };
             },
             .FOR => blk: {
                 _ = try self.evaluate(node.args[0], env);
                 while ((try self.evaluate(node.args[1], env)).truthy()) {
-                    switch (try self.evaluate(node.args[2], env)) {
-                        .nil => {},
-                        else => |v| break :blk v,
-                    }
+                    _ = try self.evaluate(node.args[2], env);
                     if (node.args.len > 3)
                         _ = try self.evaluate(node.args[3], env);
                 }
@@ -316,23 +305,33 @@ pub const Evaluator = struct {
                         var scope = ValueMaps.Node{ .data = ValueMap.init(self.allocator) };
                         defer scope.data.deinit();
                         env.prepend(&scope);
+                        defer _ = env.popFirst();
                         for (nodes[1..args.len], args[1..]) |param, arg| {
                             try scope.data.put(param.token.source(self.source), arg);
                         }
-                        break :blk self.evaluate(nodes[args.len], env);
+                        if (self.evaluate(nodes[args.len], env)) |value| {
+                            break :blk value;
+                        } else |err| break :blk switch (err) {
+                            error.EarlyExit => scope.data.get("").?,
+                            else => err,
+                        };
                     },
                     else => unreachable,
                 }
             },
             .FUN => .{ .nil = {
-                if (env.first) |scope|
-                    try scope.data.put(
-                        node.args[0].token.source(self.source),
-                        .{ .function = node.args },
-                    )
-                else
-                    unreachable;
+                try env.first.?.data.put(
+                    node.args[0].token.source(self.source),
+                    .{ .function = node.args },
+                );
             } },
+            .RETURN => blk: {
+                try env.first.?.data.put("", switch (node.args.len) {
+                    0 => .{ .nil = {} },
+                    else => try self.evaluate(node.args[0], env),
+                });
+                break :blk error.EarlyExit;
+            },
             else => unreachable,
         };
     }
