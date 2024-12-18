@@ -1,13 +1,29 @@
-fun cumulative_sum() {
-    var n = 10;  // Fixed value
-    var total = 0;
-    var i = 1;
-    while (i <= n) {
-        total = total + i;
-        i = i + 1;
+fun makeFilter(min) {
+  fun filter(n) {
+    if (n < min) {
+      return false;
     }
-    print "The cumulative sum from 1 to 10 is: ";
-    print total;
+    return true;
+  }
+  return filter;
 }
 
-cumulative_sum();
+// This function applies a function to a list of numbers
+fun applyToNumbers(f, count) {
+  var n = 0;
+  while (n < count) {
+    if (f(n)) {
+      print n;
+    }
+    n = n + 1;
+  }
+}
+
+var greaterThanX = makeFilter(89);
+var greaterThanY = makeFilter(38);
+
+print "Numbers >= 89:";
+applyToNumbers(greaterThanX, 89 + 4);
+
+print "Numbers >= 38:";
+applyToNumbers(greaterThanY, 38 + 4);
