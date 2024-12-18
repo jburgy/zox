@@ -308,11 +308,14 @@ pub const Parser = struct {
     }
 
     fn call(self: *Parser) ParseError!*const Node {
-        const result = try self.primary();
-        return switch (self.peek().tag) {
-            .LEFT_PAREN => try self.finishCall(result),
-            else => result,
-        };
+        var result = try self.primary();
+        while (true) {
+            switch (self.peek().tag) {
+                .LEFT_PAREN => result = try self.finishCall(result),
+                else => break,
+            }
+        }
+        return result;
     }
 
     fn finishCall(self: *Parser, func: *const Node) ParseError!*const Node {

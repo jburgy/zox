@@ -1,13 +1,13 @@
-fun cumulative_sum() {
-    var n = 10;  // Fixed value
-    var total = 0;
-    var i = 1;
-    while (i <= n) {
-        total = total + i;
-        i = i + 1;
-    }
-    print "The cumulative sum from 1 to 10 is: ";
-    print total;
+fun returnArg(arg) {
+  return arg;
 }
 
-cumulative_sum();
+fun returnFunCallWithArg(func, arg) {
+  return returnArg(func)(arg);
+}
+
+fun printArg(arg) {
+  print arg;
+}
+
+returnFunCallWithArg(printArg, "hello");
