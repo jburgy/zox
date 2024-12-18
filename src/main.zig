@@ -3,6 +3,7 @@ const Tokenizer = @import("tokenizer.zig").Tokenizer;
 const Parser = @import("parser.zig").Parser;
 const Evaluator = @import("evaluator.zig").Evaluator;
 
+const expect = std.testing.expect;
 const stdout = std.io.getStdOut().writer();
 
 pub fn main() !u8 {
@@ -93,4 +94,28 @@ pub fn main() !u8 {
         try stdout.print("EOF  null\n", .{}); // Placeholder, remove this line when implementing the scanner
     }
     return status;
+}
+
+test "recursion" {
+    const source =
+        \\fun fib(n) {
+        \\  if (n < 2) return n;
+        \\  return fib(n - 2) + fib(n - 1);
+        \\}
+        \\print fib(2);
+    ;
+
+    const allocator = std.testing.allocator;
+    var tokens = Tokenizer.init(source);
+    var parser = Parser.init(allocator, &tokens);
+    var evaluator = Evaluator.init(allocator, source);
+    var env = try evaluator.createEnv();
+
+    const statements = try parser.statements();
+
+    const value = try evaluator.evaluate(statements, &env);
+    try expect(switch (value) {
+        .nil => true,
+        else => false,
+    });
 }
