@@ -1,13 +1,9 @@
-fun cumulative_sum() {
-    var n = 10;  // Fixed value
-    var total = 0;
-    var i = 1;
-    while (i <= n) {
-        total = total + i;
-        i = i + 1;
-    }
-    print "The cumulative sum from 1 to 10 is: ";
-    print total;
+// This program computes the 35th Fibonacci number
+fun fib(n) {
+  if (n < 2) return n;
+  return fib(n - 2) + fib(n - 1);
 }
 
-cumulative_sum();
+var start = clock();
+print fib(10);
+print (clock() - start) < 5; // 5 seconds
