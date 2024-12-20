@@ -54,7 +54,7 @@ const Value = union(ValueType) {
     string: []const u8,
     number: f64,
     native: *const fn ([]const Value) Value,
-    function: []const *const Node,
+    function: struct { args: []const *const Node, env: *ValueMaps },
 
     pub fn format(value: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
         try switch (value) {
@@ -63,7 +63,7 @@ const Value = union(ValueType) {
             .string => |s| writer.print("{s}", .{s}),
             .number => |d| writer.print("{d}", .{d}),
             .native => |f| writer.print("{any}", .{f}),
-            .function => |f| writer.print("<fn {any}>", .{f[0].token}),
+            .function => |f| writer.print("<fn {any}>", .{f.args[0].token}),
         };
     }
 
@@ -208,7 +208,7 @@ pub const Evaluator = struct {
             .PRINT => .{ .nil = {
                 const value = try self.evaluate(node.args[0], env);
                 switch (value) {
-                    .function => |args| stdout.print("<fn {s}>", .{args[0].token.source(self.source)}) catch {},
+                    .function => |func| stdout.print("<fn {s}>", .{func.args[0].token.source(self.source)}) catch {},
                     else => stdout.print("{any}\n", .{value}) catch {},
                 }
             } },
@@ -262,8 +262,15 @@ pub const Evaluator = struct {
                 defer scope.data.deinit();
                 env.prepend(&scope);
                 defer _ = env.popFirst();
-                const res = try self.evaluate(node.args[0], env);
-                break :blk res;
+                if (self.evaluate(node.args[0], env)) |res| {
+                    break :blk res;
+                } else |err| {
+                    switch (err) {
+                        error.EarlyExit => try env.first.?.next.?.data.put("", scope.data.get("").?),
+                        else => {},
+                    }
+                    break :blk err;
+                }
             },
             .IF => if ((try self.evaluate(node.args[0], env)).truthy())
                 try self.evaluate(node.args[1], env)
@@ -301,15 +308,15 @@ pub const Evaluator = struct {
                     value.* = try self.evaluate(n, env);
                 switch (args[0]) {
                     .native => |f| break :blk f(args[1..]),
-                    .function => |nodes| {
-                        var scope = ValueMaps.Node{ .data = ValueMap.init(self.allocator) };
-                        defer scope.data.deinit();
-                        env.prepend(&scope);
-                        defer _ = env.popFirst();
-                        for (nodes[1..args.len], args[1..]) |param, arg| {
+                    .function => |func| {
+                        const scope = try self.allocator.create(ValueMaps.Node);
+                        scope.data = ValueMap.init(self.allocator);
+                        func.env.prepend(scope);
+                        defer _ = func.env.popFirst();
+                        for (func.args[1..args.len], args[1..]) |param, arg| {
                             try scope.data.put(param.token.source(self.source), arg);
                         }
-                        if (self.evaluate(nodes[args.len], env)) |value| {
+                        if (self.evaluate(func.args[args.len], func.env)) |value| {
                             break :blk value;
                         } else |err| break :blk switch (err) {
                             error.EarlyExit => scope.data.get("").?,
@@ -320,9 +327,11 @@ pub const Evaluator = struct {
                 }
             },
             .FUN => .{ .nil = {
+                const closure = try self.allocator.create(ValueMaps);
+                closure.first = env.first;
                 try env.first.?.data.put(
                     node.args[0].token.source(self.source),
-                    .{ .function = node.args },
+                    .{ .function = .{ .args = node.args, .env = closure } },
                 );
             } },
             .RETURN => blk: {

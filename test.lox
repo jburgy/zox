@@ -1,13 +1,21 @@
-fun cumulative_sum() {
-    var n = 10;  // Fixed value
-    var total = 0;
-    var i = 1;
-    while (i <= n) {
-        total = total + i;
-        i = i + 1;
-    }
-    print "The cumulative sum from 1 to 10 is: ";
-    print total;
+var baz = "after";
+{
+  var baz = "before";
+
+  for (var baz = 0; baz < 1; baz = baz + 1) {
+    print baz;
+    var baz = -1;
+    print baz;
+  }
 }
 
-cumulative_sum();
+{
+  for (var baz = 0; baz > 0; baz = baz + 1) {}
+
+  var baz = "after";
+  print baz;
+
+  for (baz = 0; baz < 1; baz = baz + 1) {
+    print baz;
+  }
+}
