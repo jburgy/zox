@@ -10,6 +10,7 @@ const EvaluationError = error{
     OperandsMustBeNumbers,
     UndefinedVariable,
     EarlyExit,
+    NotAFunction,
 };
 
 const ValueType = enum {
@@ -323,7 +324,7 @@ pub const Evaluator = struct {
                             else => err,
                         };
                     },
-                    else => unreachable,
+                    else => break :blk error.NotAFunction,
                 }
             },
             .FUN => .{ .nil = {
