@@ -10,6 +10,7 @@ const EvaluationError = error{
     OperandsMustBeNumbers,
     UndefinedVariable,
     EarlyExit,
+    NotAFunction,
 };
 
 const ValueType = enum {
@@ -313,6 +314,7 @@ pub const Evaluator = struct {
                         scope.data = ValueMap.init(self.allocator);
                         func.env.prepend(scope);
                         defer _ = func.env.popFirst();
+                        std.debug.print("{d}/{d}\n", .{ func.args.len, args.len });
                         for (func.args[1..args.len], args[1..]) |param, arg| {
                             try scope.data.put(param.token.source(self.source), arg);
                         }
@@ -323,7 +325,7 @@ pub const Evaluator = struct {
                             else => err,
                         };
                     },
-                    else => unreachable,
+                    else => break :blk error.NotAFunction,
                 }
             },
             .FUN => .{ .nil = {
