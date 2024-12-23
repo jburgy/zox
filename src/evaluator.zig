@@ -10,6 +10,8 @@ const EvaluationError = error{
     OperandsMustBeNumbers,
     UndefinedVariable,
     EarlyExit,
+    NotAFunction,
+    WrongArgCount,
 };
 
 const ValueType = enum {
@@ -309,6 +311,10 @@ pub const Evaluator = struct {
                 switch (args[0]) {
                     .native => |f| break :blk f(args[1..]),
                     .function => |func| {
+                        if (args.len + 1 != func.args.len) {
+                            std.debug.print("Expected {d} arguments but got {d}.\n", .{ func.args.len - 2, args.len - 1 });
+                            break :blk error.WrongArgCount;
+                        }
                         const scope = try self.allocator.create(ValueMaps.Node);
                         scope.data = ValueMap.init(self.allocator);
                         func.env.prepend(scope);
@@ -323,7 +329,7 @@ pub const Evaluator = struct {
                             else => err,
                         };
                     },
-                    else => unreachable,
+                    else => break :blk error.NotAFunction,
                 }
             },
             .FUN => .{ .nil = {
