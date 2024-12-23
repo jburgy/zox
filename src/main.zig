@@ -65,16 +65,12 @@ pub fn main() !u8 {
                     try stdout.print("{any}", .{value});
             } else |err| {
                 switch (err) {
-                    error.OperandMustBeANumber => std.debug.print(
-                        "Operand must be a number.\n[Line {d}]",
-                        .{parser.peek().line(file_contents)},
-                    ),
-                    error.OperandsMustBeNumbers => std.debug.print(
-                        "Operands must be numbers.\n[Line {d}]",
-                        .{parser.peek().line(file_contents)},
-                    ),
+                    error.OperandMustBeANumber => std.debug.print("Operand must be a number.", .{}),
+                    error.OperandsMustBeNumbers => std.debug.print("Operands must be numbers.", .{}),
+                    error.NotAFunction => std.debug.print("Can only call functions and classes.", .{}),
                     else => {},
                 }
+                std.debug.print("\n[Line {d}]", .{parser.peek().line(file_contents)});
                 status = 70;
             }
         } else |err| {
