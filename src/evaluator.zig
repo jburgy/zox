@@ -56,7 +56,7 @@ const Value = union(ValueType) {
     string: []const u8,
     number: f64,
     native: *const fn ([]const Value) Value,
-    function: struct { args: []const *const Node, env: *ValueMaps },
+    function: struct { args: []const *const Node, first: *ValueMaps.Node },
 
     pub fn format(value: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
         try switch (value) {
@@ -120,9 +120,6 @@ pub const Evaluator = struct {
                 const a = @intFromPtr(self.source.ptr);
                 const b = @intFromPtr(s.ptr);
                 if (a < b and b < a + self.source.len) self.allocator.free(s);
-            },
-            .function => |f| {
-                self.allocator.destroy(f.env);
             },
             else => {},
         }
@@ -289,9 +286,9 @@ pub const Evaluator = struct {
                 break :blk error.UndefinedVariable;
             },
             .LEFT_BRACE => blk: {
-                var scope = ValueMaps.Node{ .data = ValueMap.init(self.allocator) };
-                defer scope.data.deinit();
-                env.prepend(&scope);
+                const scope = try self.createScope();
+                defer self.destroyScope(scope); // FIXME: check refs!
+                env.prepend(scope);
                 defer _ = env.popFirst();
                 if (self.evaluate(node.args[0], env)) |res| {
                     break :blk res;
@@ -345,13 +342,14 @@ pub const Evaluator = struct {
                             break :blk error.WrongArgCount;
                         }
                         const scope = try self.createScope();
-                        defer self.destroyScope(scope);
-                        func.env.prepend(scope);
-                        defer _ = func.env.popFirst();
+                        defer self.destroyScope(scope); // FIXME: check refs!
+                        var func_env = ValueMaps{ .first = func.first };
+                        func_env.prepend(scope);
+                        defer _ = func_env.popFirst();
                         for (func.args[1..args.len], args[1..]) |param, arg| {
                             try scope.data.put(param.token.source(self.source), arg);
                         }
-                        if (self.evaluate(func.args[args.len], func.env)) |value| {
+                        if (self.evaluate(func.args[args.len], &func_env)) |value| {
                             break :blk value;
                         } else |err| break :blk switch (err) {
                             error.EarlyExit => scope.data.get("").?,
@@ -362,11 +360,10 @@ pub const Evaluator = struct {
                 }
             },
             .FUN => .{ .nil = {
-                const closure = try self.allocator.create(ValueMaps);
-                closure.first = env.first;
-                try env.first.?.data.put(
+                const first = env.first.?;
+                try first.data.put(
                     node.args[0].token.source(self.source),
-                    .{ .function = .{ .args = node.args, .env = closure } },
+                    .{ .function = .{ .args = node.args, .first = first } },
                 );
             } },
             .RETURN => blk: {
