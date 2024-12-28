@@ -65,24 +65,30 @@ pub const Parser = struct {
         };
     }
 
-    pub fn peek(self: *Parser) Token {
+    pub fn peek(self: *@This()) Token {
         return self.look_ahead;
     }
 
-    fn next(self: *Parser) Token {
+    fn next(self: *@This()) Token {
         const token = self.peek();
         self.look_ahead = self.tokens.next();
         return token;
     }
 
-    fn create(self: *Parser, token: Token, args: []const *const Node) !*Node {
+    fn create(self: @This(), token: Token, args: []const *const Node) !*const Node {
         const node = try self.allocator.create(Node);
         errdefer self.allocator.destroy(node);
         node.* = .{ .token = token, .args = try self.allocator.dupe(*const Node, args) };
         return node;
     }
 
-    pub fn statements(self: *Parser) ParseError!*const Node {
+    pub fn destroy(self: @This(), node: *const Node) void {
+        for (node.args) |arg| self.destroy(arg);
+        self.allocator.free(node.args);
+        self.allocator.destroy(node);
+    }
+
+    pub fn statements(self: *@This()) ParseError!*const Node {
         const start = self.tokens.buffer.len;
         var stmts = std.ArrayList(*const Node).init(self.allocator);
         defer stmts.deinit();
@@ -196,7 +202,7 @@ pub const Parser = struct {
             .FUN => blk: {
                 const root = self.next();
                 var args = std.ArrayList(*const Node).init(self.allocator);
-                errdefer args.deinit();
+                defer args.deinit();
 
                 switch (self.peek().tag) {
                     .IDENTIFIER => try args.append(try self.create(self.next(), &[_]*const Node{})),
@@ -320,7 +326,7 @@ pub const Parser = struct {
 
     fn finishCall(self: *Parser, func: *const Node) ParseError!*const Node {
         var args = std.ArrayList(*const Node).init(self.allocator);
-        errdefer args.deinit();
+        defer args.deinit();
 
         _ = self.next(); // consume '('
         try args.append(func);

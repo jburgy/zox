@@ -86,20 +86,49 @@ pub const Evaluator = struct {
     allocator: std.mem.Allocator,
     source: []const u8,
 
-    pub fn init(allocator: std.mem.Allocator, source: []const u8) @This() {
+    const Self = @This();
+
+    pub fn init(allocator: std.mem.Allocator, source: []const u8) Self {
         return .{ .allocator = allocator, .source = source };
     }
 
-    pub fn createEnv(self: @This()) !ValueMaps {
-        var globals = try self.allocator.create(ValueMaps.Node);
-        globals.data = ValueMap.init(self.allocator);
+    pub fn createEnv(self: Self) !ValueMaps {
+        var globals = try self.createScope();
         try globals.data.put("clock", wrap(std.time.timestamp));
         var env = ValueMaps{};
         env.prepend(globals);
         return env;
     }
 
-    pub fn evaluate(self: @This(), node: *const Node, env: *ValueMaps) EvaluationError!Value {
+    fn createScope(self: Self) !*ValueMaps.Node {
+        var node = try self.allocator.create(ValueMaps.Node);
+        node.data = ValueMap.init(self.allocator);
+        return node;
+    }
+
+    pub fn destroyScope(self: Self, node: *ValueMaps.Node) void {
+        var scope = node.data;
+        var it = scope.valueIterator();
+        while (it.next()) |val| self.destroy(val.*);
+        scope.clearAndFree();
+        self.allocator.destroy(node);
+    }
+
+    pub fn destroy(self: Self, value: Value) void {
+        switch (value) {
+            .string => |s| {
+                const a = @intFromPtr(self.source.ptr);
+                const b = @intFromPtr(s.ptr);
+                if (a < b and b < a + self.source.len) self.allocator.free(s);
+            },
+            .function => |f| {
+                self.allocator.destroy(f.env);
+            },
+            else => {},
+        }
+    }
+
+    pub fn evaluate(self: Self, node: *const Node, env: *ValueMaps) EvaluationError!Value {
         const slice = node.token.source(self.source);
         return switch (node.token.tag) {
             .FALSE => .{ .bool = false },
@@ -315,8 +344,8 @@ pub const Evaluator = struct {
                             std.debug.print("Expected {d} arguments but got {d}.\n", .{ func.args.len - 2, args.len - 1 });
                             break :blk error.WrongArgCount;
                         }
-                        const scope = try self.allocator.create(ValueMaps.Node);
-                        scope.data = ValueMap.init(self.allocator);
+                        const scope = try self.createScope();
+                        defer self.destroyScope(scope);
                         func.env.prepend(scope);
                         defer _ = func.env.popFirst();
                         for (func.args[1..args.len], args[1..]) |param, arg| {

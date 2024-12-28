@@ -56,8 +56,12 @@ pub fn main() !u8 {
         var tokens = Tokenizer.init(file_contents);
         var parser = Parser.init(allocator, &tokens);
         var evaluator = Evaluator.init(allocator, file_contents);
-        var env = try evaluator.createEnv();
         if (if (evaluate) parser.expression() else parser.statements()) |expr| {
+            defer allocator.destroy(expr);
+            defer expr.deinit(allocator);
+            var env = try evaluator.createEnv();
+            defer evaluator.free(env);
+
             if (parse) {
                 try expr.emit(file_contents, stdout);
             } else if (evaluator.evaluate(expr, &env)) |value| {
@@ -108,8 +112,11 @@ test "recursion" {
     var env = try evaluator.createEnv();
 
     const statements = try parser.statements();
+    defer parser.destroy(statements);
 
     const value = try evaluator.evaluate(statements, &env);
+    defer evaluator.destroyScope(env.first.?);
+
     try expect(switch (value) {
         .nil => true,
         else => false,
