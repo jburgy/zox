@@ -108,13 +108,25 @@ pub const Evaluator = struct {
 
     pub fn destroyScope(self: Self, node: *ValueMaps.Node) void {
         var scope = node.data;
+        if (if (scope.fetchRemove("")) |kv| switch (kv.value) {
+            .function => |f| f.first == node,
+            else => false,
+        } else false) return;
         var it = scope.valueIterator();
-        while (it.next()) |val| switch (val.*) {
-            .function => |f| if (f.first == node) return,
-            else => {},
-        };
-        it = scope.valueIterator();
-        while (it.next()) |val| self.destroy(val.*);
+        // Multiple functions might have closed over the same scope so we must be careful
+        // to only destroy them once.  Naive implementation keeps track of them as keys of
+        // a hash map (with void values).
+        var scopes = std.AutoHashMap(*ValueMaps.Node, void).init(self.allocator);
+        defer scopes.deinit();
+        while (it.next()) |val| {
+            switch (val.*) {
+                .function => |f| scopes.put(f.first, {}) catch @panic("destroyScope"),
+                else => {},
+            }
+            self.destroy(val.*);
+        }
+        var key = scopes.keyIterator();
+        while (key.next()) |n| if (n.* != node) self.destroyScope(n.*);
         scope.clearAndFree();
         self.allocator.destroy(node);
     }
@@ -126,7 +138,6 @@ pub const Evaluator = struct {
                 const b = @intFromPtr(s.ptr);
                 if (!(a < b and b < a + self.source.len)) self.allocator.free(s);
             },
-            .function => |f| self.destroyScope(f.first),
             else => {},
         }
     }
@@ -293,7 +304,7 @@ pub const Evaluator = struct {
             },
             .LEFT_BRACE => blk: {
                 const scope = try self.createScope();
-                defer self.destroyScope(scope); // FIXME: check refs!
+                defer self.destroyScope(scope);
                 env.prepend(scope);
                 defer _ = env.popFirst();
                 if (self.evaluate(node.args[0], env)) |res| {
@@ -348,7 +359,7 @@ pub const Evaluator = struct {
                             break :blk error.WrongArgCount;
                         }
                         const scope = try self.createScope();
-                        defer self.destroyScope(scope); // FIXME: check refs!
+                        defer self.destroyScope(scope);
                         var func_env = ValueMaps{ .first = func.first };
                         func_env.prepend(scope);
                         defer _ = func_env.popFirst();

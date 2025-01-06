@@ -85,9 +85,7 @@ pub const Parser = struct {
     pub fn destroy(self: @This(), node: *const Node) void {
         for (node.args) |arg| self.destroy(arg);
         self.allocator.free(node.args);
-        node.args = undefined;
         self.allocator.destroy(node);
-        node.* = undefined;
     }
 
     pub fn statements(self: *@This()) ParseError!*const Node {

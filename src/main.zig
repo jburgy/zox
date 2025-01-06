@@ -59,9 +59,9 @@ pub fn main() !u8 {
         var parser = Parser.init(allocator, &tokens);
         var evaluator = Evaluator.init(allocator, file_contents);
         if (if (evaluate) parser.expression() else parser.statements()) |expr| {
-            defer allocator.destroy(expr);
+            defer parser.destroy(expr);
             var env = try evaluator.createEnv();
-
+            defer evaluator.destroyScope(env.first.?);
             if (parse) {
                 try expr.emit(file_contents, stdout);
             } else if (evaluator.evaluate(expr, &env)) |value| {
