@@ -30,7 +30,9 @@ pub fn main() !u8 {
         std.process.exit(1);
     }
 
-    const allocator = std.heap.page_allocator;
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer std.debug.assert(gpa.deinit() == .ok);
+    const allocator = gpa.allocator();
     const file_contents = try std.fs.cwd().readFileAlloc(allocator, filename, std.math.maxInt(usize));
     defer allocator.free(file_contents);
 
@@ -58,9 +60,7 @@ pub fn main() !u8 {
         var evaluator = Evaluator.init(allocator, file_contents);
         if (if (evaluate) parser.expression() else parser.statements()) |expr| {
             defer allocator.destroy(expr);
-            defer expr.deinit(allocator);
             var env = try evaluator.createEnv();
-            defer evaluator.free(env);
 
             if (parse) {
                 try expr.emit(file_contents, stdout);

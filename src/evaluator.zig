@@ -109,6 +109,11 @@ pub const Evaluator = struct {
     pub fn destroyScope(self: Self, node: *ValueMaps.Node) void {
         var scope = node.data;
         var it = scope.valueIterator();
+        while (it.next()) |val| switch (val.*) {
+            .function => |f| if (f.first == node) return,
+            else => {},
+        };
+        it = scope.valueIterator();
         while (it.next()) |val| self.destroy(val.*);
         scope.clearAndFree();
         self.allocator.destroy(node);
@@ -119,8 +124,9 @@ pub const Evaluator = struct {
             .string => |s| {
                 const a = @intFromPtr(self.source.ptr);
                 const b = @intFromPtr(s.ptr);
-                if (a < b and b < a + self.source.len) self.allocator.free(s);
+                if (!(a < b and b < a + self.source.len)) self.allocator.free(s);
             },
+            .function => |f| self.destroyScope(f.first),
             else => {},
         }
     }
