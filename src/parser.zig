@@ -12,14 +12,19 @@ pub const Node = struct {
     token: Token,
     args: []const *const Node,
 
-    pub fn emit(self: @This(), src: []const u8, writer: anytype) !void {
-        const slice = src[self.token.loc.start..self.token.loc.end];
+    pub fn emit(self: @This(), src: []const u8, writer: std.fs.File.Writer) !void {
+        const slice = switch (self.token.tag) {
+            .LEFT_BRACE => "block",
+            .LEFT_PAREN => "group",
+            .RIGHT_PAREN => "apply",
+            .SEMICOLON => "prog",
+            else => src[self.token.loc.start..self.token.loc.end],
+        };
+        const delimiter = switch (self.token.tag) {
+            .SEMICOLON => "\n",
+            else => " ",
+        };
         switch (self.token.tag) {
-            .LEFT_PAREN => {
-                try writer.print("(group ", .{});
-                try self.args[0].emit(src, writer);
-                try writer.print(")", .{});
-            },
             .NUMBER => {
                 const value = try std.fmt.parseFloat(f64, slice);
                 var precision: ?usize = 1;
@@ -29,21 +34,11 @@ pub const Node = struct {
                 }
                 try writer.print("{d:.[1]}", .{ value, precision });
             },
-            .STRING => try writer.print("{s}", .{slice[1 .. slice.len - 1]}),
-            .FALSE, .NIL, .TRUE, .IDENTIFIER => try writer.print("{s}", .{slice}),
-            .SEMICOLON => {
-                try self.args[0].emit(src, writer);
-                for (self.args[1..]) |arg| {
-                    try writer.print("\n", .{});
-                    try arg.emit(src, writer);
-                }
-            },
+            .FALSE, .NIL, .TRUE, .IDENTIFIER, .STRING => try writer.print("{s}", .{slice}),
             else => {
-                try writer.print("({s} ", .{slice});
-
-                try self.args[0].emit(src, writer);
-                for (self.args[1..]) |arg| {
-                    try writer.print(" ", .{});
+                try writer.print("({s}", .{slice});
+                for (self.args) |arg| {
+                    try writer.print("{s}", .{delimiter});
                     try arg.emit(src, writer);
                 }
                 try writer.print(")", .{});
