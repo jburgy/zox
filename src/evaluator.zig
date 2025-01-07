@@ -106,6 +106,12 @@ pub const Evaluator = struct {
         return node;
     }
 
+    inline fn exists(list: ValueMaps, node: *ValueMaps.Node) bool {
+        var it = list.first;
+        while (it) |n| : (it = n.next) if (n == node) return true;
+        return false;
+    }
+
     pub fn destroyScope(self: Self, node: *ValueMaps.Node) void {
         var scope = node.data;
         if (if (scope.fetchRemove("")) |kv| switch (kv.value) {
@@ -114,32 +120,25 @@ pub const Evaluator = struct {
         } else false) return;
         var it = scope.valueIterator();
         // Multiple functions might have closed over the same scope so we must be careful
-        // to only destroy them once.  Naive implementation keeps track of them as keys of
-        // a hash map (with void values).
-        var scopes = std.AutoHashMap(*ValueMaps.Node, void).init(self.allocator);
-        defer scopes.deinit();
+        // to only destroy them once.  Naive implementation keeps track of them in a list.
+        var scopes = ValueMaps{};
         while (it.next()) |val| {
             switch (val.*) {
-                .function => |f| scopes.put(f.first, {}) catch @panic("destroyScope"),
+                .string => |s| {
+                    const a = @intFromPtr(self.source.ptr);
+                    const b = @intFromPtr(s.ptr);
+                    if (!(a < b and b < a + self.source.len)) self.allocator.free(s);
+                },
+                .function => |f| {
+                    if (!(f.first == node or exists(scopes, f.first)))
+                        scopes.prepend(f.first);
+                },
                 else => {},
             }
-            self.destroy(val.*);
         }
-        var key = scopes.keyIterator();
-        while (key.next()) |n| if (n.* != node) self.destroyScope(n.*);
+        while (scopes.popFirst()) |n| self.destroyScope(n);
         scope.clearAndFree();
         self.allocator.destroy(node);
-    }
-
-    pub fn destroy(self: Self, value: Value) void {
-        switch (value) {
-            .string => |s| {
-                const a = @intFromPtr(self.source.ptr);
-                const b = @intFromPtr(s.ptr);
-                if (!(a < b and b < a + self.source.len)) self.allocator.free(s);
-            },
-            else => {},
-        }
     }
 
     pub fn evaluate(self: Self, node: *const Node, env: *ValueMaps) EvaluationError!Value {
