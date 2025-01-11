@@ -55,8 +55,7 @@ pub const Token = struct {
         WHILE,
     };
 
-    const KV = struct { []const u8, Tag };
-    const keywords = [_]KV{
+    const reserved = std.StaticStringMap(Tag).initComptime(.{
         .{ "and", .AND },
         .{ "class", .CLASS },
         .{ "else", .ELSE },
@@ -73,8 +72,7 @@ pub const Token = struct {
         .{ "true", .TRUE },
         .{ "var", .VAR },
         .{ "while", .WHILE },
-    };
-    const reserved = std.StaticStringMap(Tag).initComptime(keywords);
+    });
 
     fn maybeReserved(name: []const u8) ?Tag {
         return reserved.get(name);

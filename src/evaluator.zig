@@ -3,11 +3,12 @@ const Node = @import("parser.zig").Node;
 
 const stdout = std.io.getStdOut().writer();
 
-const EvaluationError = error{
+pub const EvaluationError = error{
     InvalidCharacter,
     OutOfMemory,
     OperandMustBeANumber,
     OperandsMustBeNumbers,
+    OperandsMustBeStrings,
     UndefinedVariable,
     EarlyExit,
     NotAFunction,
@@ -50,7 +51,7 @@ fn wrap(comptime function: anytype) Value {
     }.call };
 }
 
-const Value = union(ValueType) {
+pub const Value = union(ValueType) {
     nil: void,
     bool: bool,
     string: []const u8,
@@ -196,12 +197,20 @@ pub const Evaluator = struct {
                     .number => |rhs| .{ .bool = lhs < rhs },
                     else => error.OperandsMustBeNumbers,
                 },
+                .string => |lhs| switch (try self.evaluate(node.args[1], env)) {
+                    .string => |rhs| .{ .bool = std.mem.lessThan(u8, lhs, rhs) },
+                    else => error.OperandsMustBeStrings,
+                },
                 else => error.OperandsMustBeNumbers,
             },
             .LESS_EQUAL => switch (try self.evaluate(node.args[0], env)) {
                 .number => |lhs| switch (try self.evaluate(node.args[1], env)) {
                     .number => |rhs| .{ .bool = lhs <= rhs },
                     else => error.OperandsMustBeNumbers,
+                },
+                .string => |lhs| switch (try self.evaluate(node.args[1], env)) {
+                    .string => |rhs| .{ .bool = !std.mem.lessThan(u8, rhs, lhs) },
+                    else => error.OperandsMustBeStrings,
                 },
                 else => error.OperandsMustBeNumbers,
             },
@@ -216,6 +225,10 @@ pub const Evaluator = struct {
                 .number => |lhs| switch (try self.evaluate(node.args[1], env)) {
                     .number => |rhs| .{ .bool = lhs >= rhs },
                     else => error.OperandsMustBeNumbers,
+                },
+                .string => |lhs| switch (try self.evaluate(node.args[1], env)) {
+                    .string => |rhs| .{ .bool = !std.mem.lessThan(u8, lhs, rhs) },
+                    else => error.OperandsMustBeStrings,
                 },
                 else => error.OperandsMustBeNumbers,
             },
@@ -240,7 +253,7 @@ pub const Evaluator = struct {
                     else => true,
                 },
                 .string => |lhs| switch (try self.evaluate(node.args[1], env)) {
-                    .string => |rhs| std.mem.eql(u8, lhs, rhs) == false,
+                    .string => |rhs| !std.mem.eql(u8, lhs, rhs),
                     else => true,
                 },
                 .bool => |lhs| switch (try self.evaluate(node.args[1], env)) {
