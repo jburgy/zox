@@ -1,11 +1,16 @@
 const std = @import("std");
-const Node = @import("parser.zig").Node;
+const mem = std.mem;
+const Allocator = mem.Allocator;
+const testing = std.testing;
+const expectEqualDeep = testing.expectEqualDeep;
+const tokenize = @import("tokenize.zig");
+const Token = tokenize.Token;
 
 const stdout = std.io.getStdOut().writer();
 
 pub const EvaluationError = error{
-    InvalidCharacter,
     OutOfMemory,
+    InvalidCharacter,
     OperandMustBeANumber,
     OperandsMustBeNumbers,
     OperandsMustBeStrings,
@@ -57,18 +62,7 @@ pub const Value = union(ValueType) {
     string: []const u8,
     number: f64,
     native: *const fn ([]const Value) Value,
-    function: struct { args: []const *const Node, first: *ValueMaps.Node },
-
-    pub fn format(value: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
-        try switch (value) {
-            .nil => writer.print("nil", .{}),
-            .bool => |b| writer.print("{any}", .{b}),
-            .string => |s| writer.print("{s}", .{s}),
-            .number => |d| writer.print("{d}", .{d}),
-            .native => |f| writer.print("{any}", .{f}),
-            .function => |f| writer.print("<fn {any}>", .{f.args[0].token}),
-        };
-    }
+    function: struct { nodes: []const usize, first: *ValueMaps.Node },
 
     pub fn truthy(value: @This()) bool {
         return switch (value) {
@@ -84,13 +78,20 @@ const ValueMap = std.StringHashMap(Value);
 const ValueMaps = std.SinglyLinkedList(ValueMap);
 
 pub const Evaluator = struct {
-    allocator: std.mem.Allocator,
+    allocator: Allocator,
     source: []const u8,
+    tokens: []const Token,
+    nodes: []const usize,
 
     const Self = @This();
 
-    pub fn init(allocator: std.mem.Allocator, source: []const u8) Self {
-        return .{ .allocator = allocator, .source = source };
+    pub fn init(allocator: Allocator, source: []const u8, tokens: []const Token, nodes: []const usize) Self {
+        return .{
+            .allocator = allocator,
+            .source = source,
+            .tokens = tokens,
+            .nodes = nodes,
+        };
     }
 
     pub fn createEnv(self: Self) !ValueMaps {
@@ -142,31 +143,33 @@ pub const Evaluator = struct {
         self.allocator.destroy(node);
     }
 
-    pub fn evaluate(self: Self, node: *const Node, env: *ValueMaps) EvaluationError!Value {
-        const slice = node.token.source(self.source);
-        return switch (node.token.tag) {
+    pub fn evaluate(self: Self, node: usize, env: *ValueMaps) EvaluationError!Value {
+        const nodes = self.nodes;
+        const token = self.tokens[nodes[node]];
+        const slice = token.src;
+        return switch (token.tag) {
             .FALSE => .{ .bool = false },
             .NIL => .{ .nil = void{} },
             .TRUE => .{ .bool = true },
-            .STRING => if (slice[slice.len - 1] == '"') .{ .string = slice[1 .. slice.len - 1] } else error.InvalidCharacter,
+            .STRING => .{ .string = slice[1 .. slice.len - 1] },
             .NUMBER => .{ .number = try std.fmt.parseFloat(f64, slice) },
-            .LEFT_PAREN => try self.evaluate(node.args[0], env),
-            .MINUS => if (node.args.len == 1) switch (try self.evaluate(node.args[0], env)) {
+            .LEFT_PAREN => try self.evaluate(nodes[node + 2], env),
+            .MINUS => if (nodes[node + 1] == 1) switch (try self.evaluate(nodes[node + 2], env)) {
                 .number => |lhs| .{ .number = -lhs },
                 else => error.OperandMustBeANumber,
-            } else switch (try self.evaluate(node.args[0], env)) {
-                .number => |lhs| switch (try self.evaluate(node.args[1], env)) {
+            } else switch (try self.evaluate(nodes[node + 2], env)) {
+                .number => |lhs| switch (try self.evaluate(nodes[node + 3], env)) {
                     .number => |rhs| .{ .number = lhs - rhs },
                     else => error.OperandsMustBeNumbers,
                 },
                 else => error.OperandsMustBeNumbers,
             },
-            .PLUS => switch (try self.evaluate(node.args[0], env)) {
-                .number => |lhs| switch (try self.evaluate(node.args[1], env)) {
+            .PLUS => switch (try self.evaluate(nodes[node + 2], env)) {
+                .number => |lhs| switch (try self.evaluate(nodes[node + 3], env)) {
                     .number => |rhs| .{ .number = lhs + rhs },
                     else => error.OperandsMustBeNumbers,
                 },
-                .string => |lhs| switch (try self.evaluate(node.args[1], env)) {
+                .string => |lhs| switch (try self.evaluate(nodes[node + 3], env)) {
                     .string => |rhs| blk: {
                         const str = try self.allocator.alloc(u8, lhs.len + rhs.len);
                         @memcpy(str[0..lhs.len], lhs);
@@ -177,107 +180,112 @@ pub const Evaluator = struct {
                 },
                 else => unreachable,
             },
-            .BANG => .{ .bool = !(try self.evaluate(node.args[0], env)).truthy() },
-            .STAR => switch (try self.evaluate(node.args[0], env)) {
-                .number => |lhs| switch (try self.evaluate(node.args[1], env)) {
+            .BANG => .{ .bool = !(try self.evaluate(nodes[node + 2], env)).truthy() },
+            .STAR => switch (try self.evaluate(nodes[node + 2], env)) {
+                .number => |lhs| switch (try self.evaluate(nodes[node + 3], env)) {
                     .number => |rhs| .{ .number = lhs * rhs },
                     else => error.OperandsMustBeNumbers,
                 },
                 else => error.OperandsMustBeNumbers,
             },
-            .SLASH => switch (try self.evaluate(node.args[0], env)) {
-                .number => |lhs| switch (try self.evaluate(node.args[1], env)) {
+            .SLASH => switch (try self.evaluate(nodes[node + 2], env)) {
+                .number => |lhs| switch (try self.evaluate(nodes[node + 3], env)) {
                     .number => |rhs| .{ .number = lhs / rhs },
                     else => error.OperandsMustBeNumbers,
                 },
                 else => error.OperandsMustBeNumbers,
             },
-            .LESS => switch (try self.evaluate(node.args[0], env)) {
-                .number => |lhs| switch (try self.evaluate(node.args[1], env)) {
+            .LESS => switch (try self.evaluate(nodes[node + 2], env)) {
+                .number => |lhs| switch (try self.evaluate(nodes[node + 3], env)) {
                     .number => |rhs| .{ .bool = lhs < rhs },
                     else => error.OperandsMustBeNumbers,
                 },
-                .string => |lhs| switch (try self.evaluate(node.args[1], env)) {
-                    .string => |rhs| .{ .bool = std.mem.lessThan(u8, lhs, rhs) },
+                .string => |lhs| switch (try self.evaluate(nodes[node + 3], env)) {
+                    .string => |rhs| .{ .bool = mem.lessThan(u8, lhs, rhs) },
                     else => error.OperandsMustBeStrings,
                 },
                 else => error.OperandsMustBeNumbers,
             },
-            .LESS_EQUAL => switch (try self.evaluate(node.args[0], env)) {
-                .number => |lhs| switch (try self.evaluate(node.args[1], env)) {
+            .LESS_EQUAL => switch (try self.evaluate(nodes[node + 2], env)) {
+                .number => |lhs| switch (try self.evaluate(nodes[node + 3], env)) {
                     .number => |rhs| .{ .bool = lhs <= rhs },
                     else => error.OperandsMustBeNumbers,
                 },
-                .string => |lhs| switch (try self.evaluate(node.args[1], env)) {
-                    .string => |rhs| .{ .bool = !std.mem.lessThan(u8, rhs, lhs) },
+                .string => |lhs| switch (try self.evaluate(nodes[node + 3], env)) {
+                    .string => |rhs| .{ .bool = !mem.lessThan(u8, rhs, lhs) },
                     else => error.OperandsMustBeStrings,
                 },
                 else => error.OperandsMustBeNumbers,
             },
-            .GREATER => switch (try self.evaluate(node.args[0], env)) {
-                .number => |lhs| switch (try self.evaluate(node.args[1], env)) {
+            .GREATER => switch (try self.evaluate(nodes[node + 2], env)) {
+                .number => |lhs| switch (try self.evaluate(nodes[node + 3], env)) {
                     .number => |rhs| .{ .bool = lhs > rhs },
                     else => error.OperandsMustBeNumbers,
                 },
                 else => error.OperandsMustBeNumbers,
             },
-            .GREATER_EQUAL => switch (try self.evaluate(node.args[0], env)) {
-                .number => |lhs| switch (try self.evaluate(node.args[1], env)) {
+            .GREATER_EQUAL => switch (try self.evaluate(nodes[node + 2], env)) {
+                .number => |lhs| switch (try self.evaluate(nodes[node + 3], env)) {
                     .number => |rhs| .{ .bool = lhs >= rhs },
                     else => error.OperandsMustBeNumbers,
                 },
-                .string => |lhs| switch (try self.evaluate(node.args[1], env)) {
-                    .string => |rhs| .{ .bool = !std.mem.lessThan(u8, lhs, rhs) },
+                .string => |lhs| switch (try self.evaluate(nodes[node + 3], env)) {
+                    .string => |rhs| .{ .bool = !mem.lessThan(u8, lhs, rhs) },
                     else => error.OperandsMustBeStrings,
                 },
                 else => error.OperandsMustBeNumbers,
             },
-            .EQUAL_EQUAL => .{ .bool = switch (try self.evaluate(node.args[0], env)) {
-                .number => |lhs| switch (try self.evaluate(node.args[1], env)) {
+            .EQUAL_EQUAL => .{ .bool = switch (try self.evaluate(nodes[node + 2], env)) {
+                .number => |lhs| switch (try self.evaluate(nodes[node + 3], env)) {
                     .number => |rhs| lhs == rhs,
                     else => false,
                 },
-                .string => |lhs| switch (try self.evaluate(node.args[1], env)) {
-                    .string => |rhs| std.mem.eql(u8, lhs, rhs),
+                .string => |lhs| switch (try self.evaluate(nodes[node + 3], env)) {
+                    .string => |rhs| mem.eql(u8, lhs, rhs),
                     else => false,
                 },
-                .bool => |lhs| switch (try self.evaluate(node.args[1], env)) {
+                .bool => |lhs| switch (try self.evaluate(nodes[node + 3], env)) {
                     .bool => |rhs| lhs == rhs,
                     else => false,
                 },
                 else => false,
             } },
-            .BANG_EQUAL => .{ .bool = switch (try self.evaluate(node.args[0], env)) {
-                .number => |lhs| switch (try self.evaluate(node.args[1], env)) {
+            .BANG_EQUAL => .{ .bool = switch (try self.evaluate(nodes[node + 2], env)) {
+                .number => |lhs| switch (try self.evaluate(nodes[node + 3], env)) {
                     .number => |rhs| lhs != rhs,
                     else => true,
                 },
-                .string => |lhs| switch (try self.evaluate(node.args[1], env)) {
-                    .string => |rhs| !std.mem.eql(u8, lhs, rhs),
+                .string => |lhs| switch (try self.evaluate(nodes[node + 3], env)) {
+                    .string => |rhs| !mem.eql(u8, lhs, rhs),
                     else => true,
                 },
-                .bool => |lhs| switch (try self.evaluate(node.args[1], env)) {
+                .bool => |lhs| switch (try self.evaluate(nodes[node + 3], env)) {
                     .bool => |rhs| lhs != rhs,
                     else => true,
                 },
                 else => true,
             } },
             .PRINT => .{ .nil = {
-                const value = try self.evaluate(node.args[0], env);
+                const value = try self.evaluate(nodes[node + 2], env);
                 switch (value) {
-                    .function => |func| stdout.print("<fn {s}>", .{func.args[0].token.source(self.source)}) catch {},
+                    .function => |func| stdout.print("<fn {s}>", .{self.tokens[func.nodes[0]].src}) catch {},
                     else => stdout.print("{any}\n", .{value}) catch {},
                 }
             } },
-            .SEMICOLON => blk: {
-                for (node.args) |arg| _ = try self.evaluate(arg, env);
-                break :blk .{ .nil = {} };
+            .SEMICOLON => .{ .nil = {} },
+            .RIGHT_BRACE, .EOF => blk: {
+                const index = node + 2;
+                const count = nodes[node + 1];
+                var value: Value = undefined;
+                for (nodes[index .. index + count]) |arg|
+                    value = try self.evaluate(arg, env);
+                break :blk value;
             },
             .VAR => .{ .nil = {
                 try env.first.?.data.put(
-                    node.args[0].token.source(self.source),
-                    switch (node.args.len) {
-                        2 => try self.evaluate(node.args[1], env),
+                    self.tokens[nodes[node + 2]].src,
+                    switch (nodes[node + 1]) {
+                        2 => try self.evaluate(nodes[node + 3], env),
                         else => .{ .nil = {} },
                     },
                 );
@@ -292,18 +300,18 @@ pub const Evaluator = struct {
                 }
                 std.debug.print(
                     "Undefined variable '{s}'.\n[Line {d}]",
-                    .{ node.token.source(self.source), node.token.line(self.source) },
+                    .{ slice, token.line(self.source) },
                 );
                 break :blk error.UndefinedVariable;
             },
             .EQUAL => blk: {
-                const lhs = node.args[0].token;
-                const key = lhs.source(self.source);
+                const lhs = self.tokens[nodes[nodes[node + 2]]];
+                const key = lhs.src;
                 var it = env.first;
                 while (it) |n| : (it = n.next) {
                     var scope = n.data;
                     if (scope.get(key)) |_| {
-                        const val = try self.evaluate(node.args[1], env);
+                        const val = try self.evaluate(nodes[node + 3], env);
                         try scope.put(key, val);
                         break :blk val;
                     } else continue;
@@ -319,7 +327,7 @@ pub const Evaluator = struct {
                 defer self.destroyScope(scope);
                 env.prepend(scope);
                 defer _ = env.popFirst();
-                if (self.evaluate(node.args[0], env)) |res| {
+                if (self.evaluate(nodes[node + 2], env)) |res| {
                     break :blk res;
                 } else |err| {
                     switch (err) {
@@ -329,45 +337,46 @@ pub const Evaluator = struct {
                     break :blk err;
                 }
             },
-            .IF => if ((try self.evaluate(node.args[0], env)).truthy())
-                try self.evaluate(node.args[1], env)
-            else if (node.args.len > 2)
-                try self.evaluate(node.args[2], env)
+            .IF => if ((try self.evaluate(nodes[node + 2], env)).truthy())
+                try self.evaluate(nodes[node + 3], env)
+            else if (nodes[node + 1] > 2)
+                try self.evaluate(nodes[node + 4], env)
             else
                 .{ .nil = {} },
             .OR => blk: {
-                const lhs = try self.evaluate(node.args[0], env);
-                break :blk if (lhs.truthy()) lhs else try self.evaluate(node.args[1], env);
+                const lhs = try self.evaluate(nodes[node + 2], env);
+                break :blk if (lhs.truthy()) lhs else try self.evaluate(nodes[node + 3], env);
             },
             .AND => blk: {
-                const lhs = try self.evaluate(node.args[0], env);
-                break :blk if (!lhs.truthy()) lhs else try self.evaluate(node.args[1], env);
+                const lhs = try self.evaluate(nodes[node + 2], env);
+                break :blk if (!lhs.truthy()) lhs else try self.evaluate(nodes[node + 3], env);
             },
-            .WHILE => blk: {
-                while ((try self.evaluate(node.args[0], env)).truthy()) {
-                    _ = try self.evaluate(node.args[1], env);
+            .WHILE => .{ .nil = {
+                while ((try self.evaluate(nodes[node + 2], env)).truthy()) {
+                    _ = try self.evaluate(nodes[node + 3], env);
                 }
-                break :blk .{ .nil = {} };
-            },
-            .FOR => blk: {
-                _ = try self.evaluate(node.args[0], env);
-                while ((try self.evaluate(node.args[1], env)).truthy()) {
-                    _ = try self.evaluate(node.args[2], env);
-                    if (node.args.len > 3)
-                        _ = try self.evaluate(node.args[3], env);
+            } },
+            .FOR => .{ .nil = {
+                _ = try self.evaluate(nodes[node + 2], env);
+                while ((try self.evaluate(nodes[node + 3], env)).truthy()) {
+                    _ = try self.evaluate(nodes[node + 4], env);
+                    _ = try self.evaluate(nodes[node + 5], env);
                 }
-                break :blk .{ .nil = {} };
-            },
+            } },
             .RIGHT_PAREN => blk: {
-                const args: []Value = try self.allocator.alloc(Value, node.args.len);
+                const index = node + 2;
+                const count = nodes[node + 1];
+                const args: []Value = try self.allocator.alloc(Value, count);
                 defer self.allocator.free(args);
-                for (node.args, args) |n, *value|
-                    value.* = try self.evaluate(n, env);
+
+                for (nodes[index .. index + count], args) |arg, *value|
+                    value.* = try self.evaluate(arg, env);
+
                 switch (args[0]) {
                     .native => |f| break :blk f(args[1..]),
                     .function => |func| {
-                        if (args.len + 1 != func.args.len) {
-                            std.debug.print("Expected {d} arguments but got {d}.\n", .{ func.args.len - 2, args.len - 1 });
+                        if (args.len != func.nodes.len) {
+                            std.debug.print("Expected {d} arguments but got {d}.\n", .{ func.nodes.len - 1, args.len - 1 });
                             break :blk error.WrongArgCount;
                         }
                         const scope = try self.createScope();
@@ -375,10 +384,10 @@ pub const Evaluator = struct {
                         var func_env = ValueMaps{ .first = func.first };
                         func_env.prepend(scope);
                         defer _ = func_env.popFirst();
-                        for (func.args[1..args.len], args[1..]) |param, arg| {
-                            try scope.data.put(param.token.source(self.source), arg);
+                        for (func.nodes[0 .. args.len - 1], args[1..]) |param, arg| {
+                            try scope.data.put(self.tokens[param].src, arg);
                         }
-                        if (self.evaluate(func.args[args.len], &func_env)) |value| {
+                        if (self.evaluate(func.nodes[args.len - 1], &func_env)) |value| {
                             break :blk value;
                         } else |err| break :blk switch (err) {
                             error.EarlyExit => scope.data.get("").?,
@@ -390,15 +399,17 @@ pub const Evaluator = struct {
             },
             .FUN => .{ .nil = {
                 const first = env.first.?;
+                const index = node + 2;
+                const count = nodes[node + 1];
                 try first.data.put(
-                    node.args[0].token.source(self.source),
-                    .{ .function = .{ .args = node.args, .first = first } },
+                    self.tokens[nodes[index]].src,
+                    .{ .function = .{ .nodes = nodes[index + 1 .. index + count], .first = first } },
                 );
             } },
             .RETURN => blk: {
-                try env.first.?.data.put("", switch (node.args.len) {
+                try env.first.?.data.put("", switch (nodes[node + 1]) {
                     0 => .{ .nil = {} },
-                    else => try self.evaluate(node.args[0], env),
+                    else => try self.evaluate(nodes[node + 2], env),
                 });
                 break :blk error.EarlyExit;
             },
@@ -406,3 +417,53 @@ pub const Evaluator = struct {
         };
     }
 };
+
+fn helper(allocator: Allocator, source: []const u8) !Value {
+    const tokens = try tokenize.tokens(allocator, source);
+    defer allocator.free(tokens);
+
+    var nodes = try std.ArrayListUnmanaged(usize).initCapacity(allocator, 16);
+    defer nodes.deinit(allocator);
+
+    const state = try @import("parse.zig").statements(&nodes, allocator, tokens, 0);
+    std.debug.assert(state.token == tokens.len - 1);
+
+    const evaluator = Evaluator.init(allocator, source, tokens, nodes.items);
+    var env = try evaluator.createEnv();
+    defer evaluator.destroyScope(env.first.?);
+
+    return evaluator.evaluate(state.node, &env);
+}
+
+test "evaluate" {
+    const allocator = std.testing.allocator;
+    const cases = [_]struct { source: []const u8, expected: Value }{
+        .{ .source = "true", .expected = .{ .bool = true } },
+        .{ .source = "!true", .expected = .{ .bool = false } },
+        .{ .source = "1 + 1", .expected = .{ .number = 2 } },
+        .{ .source = "1 + 2 * 3", .expected = .{ .number = 7 } },
+        .{ .source = "2 < 3", .expected = .{ .bool = true } },
+        .{ .source = 
+        \\ "foo" < "bar"
+        , .expected = .{ .bool = false } },
+        .{ .source = "{ var a = 1; a; }", .expected = .{ .number = 1 } },
+        .{ .source = "var a; a = 1", .expected = .{ .number = 1 } },
+        .{ .source = "var a = 0; a = 1", .expected = .{ .number = 1 } },
+        .{ .source = 
+        \\ {
+        \\   fun sumTo(n) {
+        \\     var sum = 0;
+        \\     for (var i = 0; i < n; i = i + 1) {
+        \\       sum = sum + i;
+        \\     }
+        \\     return sum;
+        \\   }
+        \\   sumTo(6);
+        \\ }
+        , .expected = .{ .number = 15 } },
+    };
+    for (cases) |case| {
+        const actual = try helper(allocator, case.source);
+        try expectEqualDeep(case.expected, actual);
+    }
+}

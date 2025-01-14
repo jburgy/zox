@@ -5,12 +5,7 @@ const stderr = std.io.getStdErr().writer();
 
 pub const Token = struct {
     tag: Tag,
-    loc: Loc,
-
-    pub const Loc = struct {
-        start: usize,
-        end: usize,
-    };
+    src: []const u8,
 
     pub const Tag = enum {
         INVALID,
@@ -79,20 +74,17 @@ pub const Token = struct {
     }
 
     pub fn line(self: @This(), src: []const u8) usize {
-        return std.mem.count(u8, src[0..self.loc.end], "\n") + 1;
-    }
-
-    pub fn source(self: @This(), src: []const u8) []const u8 {
-        return src[self.loc.start..self.loc.end];
+        const len = self.src.len + @intFromPtr(self.src.ptr) - @intFromPtr(src.ptr);
+        return std.mem.count(u8, src[0..len], "\n") + 1;
     }
 };
 
-pub const Tokenizer = struct {
+const Tokenizer = struct {
     buffer: []const u8,
-    index: usize,
+    index: usize = 0,
 
     pub fn dump(self: *Tokenizer, token: Token) !bool {
-        const src = token.source(self.buffer);
+        const src = token.src;
         var lexical_error = false;
 
         switch (token.tag) {
@@ -121,10 +113,6 @@ pub const Tokenizer = struct {
             else => try stdout.print("{s} {s} null\n", .{ @tagName(token.tag), src }),
         }
         return lexical_error;
-    }
-
-    pub fn init(buffer: []const u8) Tokenizer {
-        return .{ .buffer = buffer, .index = 0 };
     }
 
     fn maybeReserved(self: *Tokenizer, start: usize) Token.Tag {
@@ -259,6 +247,20 @@ pub const Tokenizer = struct {
                 else => .EOF,
             };
         };
-        return .{ .tag = tag, .loc = .{ .start = start, .end = self.index } };
+        return .{ .tag = tag, .src = self.buffer[start..self.index] };
     }
 };
+
+pub fn tokens(allocator: std.mem.Allocator, buffer: []const u8) std.mem.Allocator.Error![]const Token {
+    var tokenizer = Tokenizer{ .buffer = buffer };
+    var result = try std.ArrayListUnmanaged(Token).initCapacity(allocator, 4);
+    defer result.deinit(allocator);
+
+    while (true) {
+        const token = tokenizer.next();
+        try result.append(allocator, token);
+        if (token.tag == .EOF)
+            break;
+    }
+    return result.toOwnedSlice(allocator);
+}
