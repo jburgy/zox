@@ -7,9 +7,9 @@ const math = std.math;
 const mem = std.mem;
 const Allocator = std.mem.Allocator;
 const native_endian = builtin.cpu.arch.endian();
-const evaluator = @import("evaluator.zig");
-const EvaluationError = evaluator.EvaluationError;
-const Value = evaluator.Value;
+const evaluate = @import("evaluate.zig");
+const EvaluationError = evaluate.EvaluationError;
+const Value = evaluate.Value;
 
 const Stack = std.ArrayListUnmanaged(Value);
 const Instruction = fn (Allocator, *Stack, []const u8) EvaluationError!void;
@@ -78,7 +78,7 @@ fn binary(comptime op: fn (allocator: Allocator, a: Value, b: Value) EvaluationE
     }.wrap;
 }
 
-fn add(allocator: Allocator, a: evaluator.Value, b: evaluator.Value) EvaluationError!evaluator.Value {
+fn add(allocator: Allocator, a: Value, b: Value) EvaluationError!Value {
     return switch (a) {
         .number => |lhs| switch (b) {
             .number => |rhs| .{ .number = lhs + rhs },
@@ -107,7 +107,7 @@ test add {
     assert(stack.pop().number == 2.0);
 }
 
-fn sub(allocator: Allocator, a: evaluator.Value, b: evaluator.Value) EvaluationError!evaluator.Value {
+fn sub(allocator: Allocator, a: Value, b: Value) EvaluationError!Value {
     _ = allocator;
     return switch (a) {
         .number => |lhs| switch (b) {
@@ -118,7 +118,7 @@ fn sub(allocator: Allocator, a: evaluator.Value, b: evaluator.Value) EvaluationE
     };
 }
 
-fn mul(allocator: Allocator, a: evaluator.Value, b: evaluator.Value) EvaluationError!evaluator.Value {
+fn mul(allocator: Allocator, a: Value, b: Value) EvaluationError!Value {
     _ = allocator;
     return switch (a) {
         .number => |lhs| switch (b) {
@@ -129,7 +129,7 @@ fn mul(allocator: Allocator, a: evaluator.Value, b: evaluator.Value) EvaluationE
     };
 }
 
-fn div(allocator: Allocator, a: evaluator.Value, b: evaluator.Value) EvaluationError!evaluator.Value {
+fn div(allocator: Allocator, a: Value, b: Value) EvaluationError!Value {
     _ = allocator;
     return switch (a) {
         .number => |lhs| switch (b) {

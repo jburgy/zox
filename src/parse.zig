@@ -2,53 +2,12 @@ const std = @import("std");
 const mem = std.mem;
 const Allocator = mem.Allocator;
 const testing = std.testing;
-const expectEqualDeep = testing.expectEqualDeep;
 const tokenize = @import("tokenize.zig");
 const Token = tokenize.Token;
-const Tokenizer = tokenize.Tokenizer;
 
 const ParseError = error{
     OutOfMemory,
     UnexpectedToken,
-};
-
-pub const Node = struct {
-    token: Token,
-    args: []const *const Node,
-
-    pub fn emit(self: @This(), src: []const u8, writer: std.fs.File.Writer) !void {
-        const slice = switch (self.token.tag) {
-            .LEFT_BRACE => "block",
-            .LEFT_PAREN => "group",
-            .RIGHT_PAREN => "apply",
-            .SEMICOLON => "prog",
-            else => src[self.token.loc.start..self.token.loc.end],
-        };
-        const delimiter = switch (self.token.tag) {
-            .SEMICOLON => "\n",
-            else => " ",
-        };
-        switch (self.token.tag) {
-            .NUMBER => {
-                const value = try std.fmt.parseFloat(f64, slice);
-                var precision: ?usize = 1;
-                if (std.mem.indexOfScalar(u8, slice, '.')) |index| {
-                    if (std.mem.allEqual(u8, slice[index + 1 ..], '0') == false)
-                        precision = null;
-                }
-                try writer.print("{d:.[1]}", .{ value, precision });
-            },
-            .FALSE, .NIL, .TRUE, .IDENTIFIER, .STRING => try writer.print("{s}", .{slice}),
-            else => {
-                try writer.print("({s}", .{slice});
-                for (self.args) |arg| {
-                    try writer.print("{s}", .{delimiter});
-                    try arg.emit(src, writer);
-                }
-                try writer.print(")", .{});
-            },
-        }
-    }
 };
 
 const State = struct { token: usize, node: usize };
@@ -241,7 +200,7 @@ fn statement(nodes: *Nodes, allocator: Allocator, tokens: []const Token, token: 
     };
 }
 
-pub fn expression(nodes: *Nodes, allocator: Allocator, tokens: []const Token, index: usize) ParseError!State {
+fn expression(nodes: *Nodes, allocator: Allocator, tokens: []const Token, index: usize) ParseError!State {
     var result = try equality(nodes, allocator, tokens, index);
     while (true) {
         switch (tokens[result.token].tag) {
@@ -376,12 +335,13 @@ fn helper(allocator: Allocator, buffer: []const u8) ![]const usize {
     defer nodes.deinit(allocator);
 
     const state = try statements(&nodes, allocator, tokens, 0);
-    std.debug.assert(state.token == tokens.len - 1);
+    std.debug.assert(tokens[state.token].tag == .EOF);
+    std.debug.assert(state.node + 2 + nodes.items[state.node + 1] == nodes.items.len);
 
     return nodes.toOwnedSlice(allocator);
 }
 
-test primary {
+test statements {
     const allocator = testing.allocator;
 
     const cases = [_]struct { buffer: []const u8, expected: []const usize }{
@@ -397,7 +357,6 @@ test primary {
     for (cases) |case| {
         const actual = try helper(allocator, case.buffer);
         defer allocator.free(actual);
-        std.debug.print("{s} => {any}\n", .{ case.buffer, actual });
-        try expectEqualDeep(case.expected, actual);
+        try testing.expectEqualDeep(case.expected, actual);
     }
 }
