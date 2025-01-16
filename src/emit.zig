@@ -4,8 +4,8 @@ const testing = std.testing;
 const tokenize = @import("tokenize.zig");
 const parse = @import("parse.zig");
 
-pub fn emit(tokens: []const tokenize.Token, nodes: []const usize, node: usize, writer: anytype) !void {
-    const token = tokens[nodes[node]];
+pub fn emit(tokens: []const tokenize.Token, nodes: []const parse.Node, node: usize, writer: anytype) !void {
+    const token = tokens[nodes[node].head.token];
     const slice = switch (token.tag) {
         .EOF => "prog",
         .LEFT_PAREN => "group",
@@ -30,30 +30,30 @@ pub fn emit(tokens: []const tokenize.Token, nodes: []const usize, node: usize, w
         },
         .FALSE, .NIL, .TRUE, .IDENTIFIER, .STRING => try writer.print("{s}", .{slice}),
         .VAR => {
-            try writer.print("({s}{s}{s}", .{ slice, delimiter, tokens[nodes[node + 2]].src });
-            if (nodes[node + 1] == 2) {
+            try writer.print("({s}{s}{s}", .{ slice, delimiter, tokens[nodes[node + 1].head.token].src });
+            if (nodes[node].head.count == 2) {
                 try writer.print("{s}", .{delimiter});
-                try emit(tokens, nodes, node + 2, writer);
+                try emit(tokens, nodes, nodes[node + 2].node, writer);
             }
             try writer.print(")", .{});
         },
         .FUN => {
-            const index = node + 2;
-            const count = nodes[node + 1] - 1;
+            const index = node + 1;
+            const count = nodes[node].head.count - 1;
             try writer.print("({s}", .{slice});
             for (nodes[index .. index + count]) |arg|
-                try writer.print("{s}{s}", .{ delimiter, tokens[arg].src });
+                try writer.print("{s}{s}", .{ delimiter, tokens[arg.head.token].src });
             try writer.print("{s}", .{delimiter});
-            try emit(tokens, nodes, nodes[index + count], writer);
+            try emit(tokens, nodes, nodes[index + count].node, writer);
             try writer.print(")", .{});
         },
         else => {
-            const index = node + 2;
-            const count = nodes[node + 1];
+            const index = node + 1;
+            const count = nodes[node].head.count;
             try writer.print("({s}", .{slice});
             for (nodes[index .. index + count]) |arg| {
                 try writer.print("{s}", .{delimiter});
-                try emit(tokens, nodes, arg, writer);
+                try emit(tokens, nodes, arg.node, writer);
             }
             try writer.print(")", .{});
         },
@@ -103,23 +103,24 @@ test emit {
     const tokens = try tokenize.tokens(allocator, buffer);
     defer allocator.free(tokens);
 
-    var nodes = try std.ArrayListUnmanaged(usize).initCapacity(allocator, 16);
+    var nodes = try std.ArrayListUnmanaged(parse.Node).initCapacity(allocator, 16);
     defer nodes.deinit(allocator);
 
     const state = try parse.statements(&nodes, allocator, tokens, 0);
     std.debug.assert(tokens[state.token].tag == .EOF);
-    std.debug.assert(state.node + 2 + nodes.items[state.node + 1] == nodes.items.len);
+    const root = state.node.node;
+    std.debug.assert(root + 1 + nodes.items[root].head.count == nodes.items.len);
 
-    var actual = std.ArrayList(u8).init(allocator);
-    defer actual.deinit();
+    var actual = try std.ArrayListUnmanaged(u8).initCapacity(allocator, 512);
+    defer actual.deinit(allocator);
 
-    try emit(tokens, nodes.items, state.node, actual.writer());
+    try emit(tokens, nodes.items, root, actual.writer(allocator));
 
     const expected =
         \\(prog
         \\(fun makeAccumulator label (block
-        \\(var sum sum)
-        \\(var count count)
+        \\(var sum 0.0)
+        \\(var count 0.0)
         \\(fun accumulate value (block
         \\(= sum (+ sum value))
         \\(= count (+ count 1.0))
@@ -133,8 +134,8 @@ test emit {
         \\(= count 0.0)))
         \\(return sum)))
         \\(return accumulate)))
-        \\(var acc1 acc1)
-        \\(var acc2 acc2)
+        \\(var acc1 (apply makeAccumulator "First:"))
+        \\(var acc2 (apply makeAccumulator "Second:"))
         \\(apply acc1 2.0)
         \\(apply acc1 6.0)
         \\(apply acc1 3.0)
