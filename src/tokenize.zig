@@ -1,8 +1,5 @@
 const std = @import("std");
 
-const stdout = std.io.getStdOut().writer();
-const stderr = std.io.getStdErr().writer();
-
 pub const Token = struct {
     tag: Tag,
     src: []const u8,
@@ -73,47 +70,38 @@ pub const Token = struct {
         return reserved.get(name);
     }
 
-    pub fn line(self: @This(), src: []const u8) usize {
+    pub fn line(self: Token, src: []const u8) usize {
         const len = self.src.len + @intFromPtr(self.src.ptr) - @intFromPtr(src.ptr);
         return std.mem.count(u8, src[0..len], "\n") + 1;
+    }
+
+    pub fn format(
+        self: Token,
+        comptime fmt: []const u8,
+        options: std.fmt.FormatOptions,
+        writer: anytype,
+    ) !bool {
+        _ = fmt;
+        _ = options;
+        switch (self.tag) {
+            .STRING => try writer.print("{s} {s} {s}\n", .{ @tagName(self.tag), self.src, self.src[1 .. self.src.len - 1] }),
+            .NUMBER => {
+                const value = try std.fmt.parseFloat(f64, self.src);
+                var precision: ?usize = 1;
+                if (std.mem.indexOfScalar(u8, self.src, '.')) |index| {
+                    if (std.mem.allEqual(u8, self.src[index + 1 ..], '0') == false)
+                        precision = null;
+                }
+                try writer.print("{s} {s} {d:.[3]}\n", .{ @tagName(self.tag), self.src, value, precision });
+            },
+            else => try writer.print("{s} {s} null\n", .{ @tagName(self.tag), self.src }),
+        }
     }
 };
 
 const Tokenizer = struct {
     buffer: []const u8,
     index: usize = 0,
-
-    pub fn dump(self: *Tokenizer, token: Token) !bool {
-        const src = token.src;
-        var lexical_error = false;
-
-        switch (token.tag) {
-            .INVALID => {
-                try stderr.print("[line {d}] Error: Unexpected character: {s}\n", .{ token.line(self.buffer), src });
-                lexical_error = true;
-            },
-            .STRING => {
-                const valid = self.buffer[token.loc.end - 1] == '"';
-                if (valid) {
-                    try stdout.print("{s} {s} {s}\n", .{ @tagName(token.tag), src, src[1 .. src.len - 1] });
-                } else {
-                    try stderr.print("[line {d}] Error: Unterminated string.\n", .{token.line(self.buffer)});
-                    lexical_error = true;
-                }
-            },
-            .NUMBER => {
-                const value = try std.fmt.parseFloat(f64, src);
-                var precision: ?usize = 1;
-                if (std.mem.indexOfScalar(u8, src, '.')) |index| {
-                    if (std.mem.allEqual(u8, src[index + 1 ..], '0') == false)
-                        precision = null;
-                }
-                try stdout.print("{s} {s} {d:.[3]}\n", .{ @tagName(token.tag), src, value, precision });
-            },
-            else => try stdout.print("{s} {s} null\n", .{ @tagName(token.tag), src }),
-        }
-        return lexical_error;
-    }
 
     fn maybeReserved(self: *Tokenizer, start: usize) Token.Tag {
         return Token.maybeReserved(self.buffer[start..self.index]) orelse .IDENTIFIER;

@@ -183,7 +183,7 @@ pub fn Evaluator(comptime WriterType: anytype) type {
                             @memcpy(str[lhs.len..], rhs);
                             break :blk .{ .string = str };
                         },
-                        else => error.OperandsMustBeNumbers,
+                        else => error.OperandsMustBeStrings,
                     },
                     else => unreachable,
                 },
@@ -401,7 +401,10 @@ pub fn Evaluator(comptime WriterType: anytype) type {
                                 else => err,
                             };
                         },
-                        else => break :blk error.NotAFunction,
+                        else => {
+                            std.debug.print("Can only call functions and classes.", .{});
+                            break :blk error.NotAFunction;
+                        },
                     }
                 },
                 .FUN => .{ .nil = {
@@ -426,7 +429,7 @@ pub fn Evaluator(comptime WriterType: anytype) type {
     };
 }
 
-fn helper(allocator: Allocator, source: []const u8) !Value {
+pub fn evaluate(allocator: Allocator, source: []const u8, writer: anytype) !Value {
     const tokens = try tokenize.tokens(allocator, source);
     defer allocator.free(tokens);
 
@@ -435,22 +438,28 @@ fn helper(allocator: Allocator, source: []const u8) !Value {
 
     const state = try parse.statements(&nodes, allocator, tokens, 0);
     std.debug.assert(state.token == tokens.len - 1);
+    const root = state.node.node;
+    std.debug.assert(root + 1 + nodes.items[root].head.count == nodes.items.len);
 
-    const Buffer = std.ArrayListUnmanaged(u8);
-    var stdout = try Buffer.initCapacity(allocator, 16);
-    defer stdout.deinit(allocator);
-
-    const evaluator = Evaluator(Buffer.Writer).init(
+    const evaluator = Evaluator(@TypeOf(writer)).init(
         allocator,
         source,
         tokens,
         nodes.items,
-        stdout.writer(allocator),
+        writer,
     );
     var env = try evaluator.createEnv();
     defer evaluator.destroyScope(env.first.?);
 
     return evaluator.evaluate(state.node.node, &env);
+}
+
+fn helper(allocator: Allocator, source: []const u8) !Value {
+    const Buffer = std.ArrayListUnmanaged(u8);
+    var stdout = try Buffer.initCapacity(allocator, 16);
+    defer stdout.deinit(allocator);
+
+    return evaluate(allocator, source, stdout.writer(allocator));
 }
 
 test "evaluate" {
