@@ -16,6 +16,7 @@ pub const Node = packed union {
 };
 const State = struct { token: u24, node: Node };
 const Nodes = std.ArrayListUnmanaged(Node);
+const MaxArgs = std.math.maxInt(std.meta.FieldType(std.meta.FieldType(Node, .head), .count));
 
 fn head(token: u24, count: u8) Node {
     return .{ .head = .{ .token = token, .count = count } };
@@ -34,15 +35,15 @@ fn appendNode(nodes: *Nodes, allocator: Allocator, token: u24, args: []const Nod
 
 pub fn statements(nodes: *Nodes, allocator: Allocator, tokens: []const Token, start: u24) ParseError!State {
     var token = start;
-    var args = try Nodes.initCapacity(allocator, 4);
-    defer args.deinit(allocator);
+    var buffer: [MaxArgs]Node = undefined;
+    var args = Nodes.initBuffer(buffer[0..]);
 
     while (true) {
         switch (tokens[token].tag) {
             .RIGHT_BRACE, .EOF => break,
             else => {
                 const state = try statement(nodes, allocator, tokens, token);
-                try args.append(allocator, state.node);
+                args.appendAssumeCapacity(state.node);
                 token = state.token + @intFromBool(tokens[state.token].tag == .SEMICOLON);
             },
         }
@@ -160,13 +161,13 @@ fn statement(nodes: *Nodes, allocator: Allocator, tokens: []const Token, token: 
         },
         .FUN => blk: {
             var index = token + 1;
-            var args = try Nodes.initCapacity(allocator, 2);
-            defer args.deinit(allocator);
+            var buffer: [MaxArgs]Node = undefined;
+            var args = Nodes.initBuffer(buffer[0..]);
 
             if (tokens[index].tag != .IDENTIFIER)
                 break :blk error.UnexpectedToken;
 
-            try args.append(allocator, head(index, 0));
+            args.appendAssumeCapacity(head(index, 0));
             if (tokens[index + 1].tag != .LEFT_PAREN)
                 break :blk error.UnexpectedToken;
             index += 2; // skip name and opening paren
@@ -175,7 +176,7 @@ fn statement(nodes: *Nodes, allocator: Allocator, tokens: []const Token, token: 
                 switch (tokens[index].tag) {
                     .RIGHT_PAREN => break,
                     .IDENTIFIER => {
-                        try args.append(allocator, head(index, 0));
+                        args.appendAssumeCapacity(head(index, 0));
                         index += 1;
                         switch (tokens[index].tag) {
                             .COMMA => index += 1,
@@ -190,7 +191,7 @@ fn statement(nodes: *Nodes, allocator: Allocator, tokens: []const Token, token: 
                 break :blk error.UnexpectedToken;
 
             const body = try statement(nodes, allocator, tokens, index + 1);
-            try args.append(allocator, body.node);
+            args.appendAssumeCapacity(body.node);
 
             break :blk .{
                 .token = body.token,
@@ -306,13 +307,13 @@ fn call(nodes: *Nodes, allocator: Allocator, tokens: []const Token, token: u24) 
 
 fn finishCall(nodes: *Nodes, allocator: Allocator, tokens: []const Token, func: State) ParseError!State {
     var index = func.token + 1;
-    var args = try Nodes.initCapacity(allocator, 4);
-    defer args.deinit(allocator);
+    var buffer: [MaxArgs]Node = undefined;
+    var args = Nodes.initBuffer(buffer[0..]);
 
     try args.append(allocator, func.node);
     while (tokens[index].tag != .RIGHT_PAREN) {
         const state = try expression(nodes, allocator, tokens, index);
-        try args.append(allocator, state.node);
+        args.appendAssumeCapacity(state.node);
         index = state.token + @intFromBool(tokens[state.token].tag == .COMMA);
     }
     return .{
@@ -366,12 +367,68 @@ test statements {
             ref(1),
             ref(4),
         } },
-        // .{ .buffer = "a + b", .expected = &.{ 0, 0, 2, 0, 1, 2, 0, 2, 3, 1, 4 } },
-        // .{ .buffer = "a + b * c", .expected = &.{ 0, 0, 2, 0, 4, 0, 3, 2, 2, 4, 1, 2, 0, 6, 5, 1, 10 } },
-        // .{ .buffer = "var a;", .expected = &.{ 0, 1, 1, 3, 1, 0 } },
-        // .{ .buffer = "var a = 0;", .expected = &.{ 3, 0, 0, 2, 1, 0, 5, 1, 2 } },
-        // .{ .buffer = "var a; a = 1", .expected = &.{ 0, 1, 1, 3, 0, 5, 0, 4, 2, 3, 5, 6, 2, 0, 7 } },
-        // .{ .buffer = "var a = 0; a = 1", .expected = &.{ 3, 0, 0, 2, 1, 0, 5, 0, 7, 0, 6, 2, 6, 8, 8, 2, 2, 10 } },
+        .{ .buffer = "a + b", .expected = &.{
+            head(0, 0),
+            head(2, 0),
+            head(1, 2),
+            ref(0),
+            ref(2),
+            head(3, 1),
+            ref(4),
+        } },
+        .{ .buffer = "a + b * c", .expected = &.{
+            head(0, 0),
+            head(2, 0),
+            head(4, 0),
+            head(3, 2),
+            ref(2),
+            ref(4),
+            head(2, 2),
+            ref(0),
+            ref(6),
+            head(5, 1),
+            ref(10),
+        } },
+        .{ .buffer = "var a;", .expected = &.{
+            head(0, 1),
+            ref(1),
+            head(3, 1),
+            ref(0),
+        } },
+        .{ .buffer = "var a = 0;", .expected = &.{
+            head(3, 0),
+            head(0, 2),
+            ref(1),
+            ref(0),
+            head(5, 1),
+            ref(2),
+        } },
+        .{ .buffer = "var a; a = 1", .expected = &.{
+            head(0, 1),
+            ref(1),
+            head(3, 0),
+            head(5, 0),
+            head(4, 2),
+            ref(3),
+            ref(5),
+            head(6, 2),
+            ref(0),
+            ref(7),
+        } },
+        .{ .buffer = "var a = 0; a = 1", .expected = &.{
+            head(3, 0),
+            head(0, 2),
+            ref(1),
+            ref(0),
+            head(5, 0),
+            head(7, 0),
+            head(6, 2),
+            ref(6),
+            ref(8),
+            head(8, 2),
+            ref(2),
+            ref(10),
+        } },
     };
     for (cases) |case| {
         const actual = try helper(allocator, case.buffer);
