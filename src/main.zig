@@ -28,7 +28,7 @@ pub fn main() !u8 {
     var status: u8 = 0;
     if (file_contents.len == 0) return status;
 
-    if (evaluate.evaluate(allocator, file_contents, stdout)) |value| {
+    if (evaluate(allocator, file_contents, stdout)) |value| {
         try stdout.print("{any}", .{value});
     } else |err| {
         status = 70;

@@ -4,7 +4,7 @@ pub const Token = struct {
     tag: Tag,
     src: []const u8,
 
-    pub const Tag = enum {
+    pub const Tag = enum(u8) {
         INVALID,
         EOF,
         LEFT_PAREN,
