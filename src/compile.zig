@@ -56,8 +56,8 @@ pub fn compile(program: *std.ArrayList(u8), tokens: []const Token, nodes: []cons
             try compile(program, tokens, nodes, nodes[node + 1].node);
             try program.append(opcode("dup"));
             try program.append(opcode("jif"));
-            const offset = program.items.len;
             try program.appendSlice(&zero);
+            const offset = program.items.len;
             try program.append(opcode("pop"));
             try compile(program, tokens, nodes, nodes[node + 1].node);
             program.replaceRangeAssumeCapacity(offset, offset + zero.len, &mem.toBytes(program.items.len - offset));
@@ -68,8 +68,8 @@ pub fn compile(program: *std.ArrayList(u8), tokens: []const Token, nodes: []cons
             try program.append(opcode("dup"));
             try program.append(opcode("not"));
             try program.append(opcode("jif"));
-            const offset = program.items.len;
             try program.appendSlice(&zero);
+            const offset = program.items.len;
             try program.append(opcode("pop"));
             try compile(program, tokens, nodes, nodes[node + 1].node);
             program.replaceRangeAssumeCapacity(offset, offset + zero.len, &mem.toBytes(program.items.len - offset));
