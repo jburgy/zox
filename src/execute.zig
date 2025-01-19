@@ -7,9 +7,9 @@ const Allocator = std.mem.Allocator;
 const native_endian = builtin.cpu.arch.endian();
 const evaluate = @import("evaluate.zig");
 const EvaluationError = evaluate.EvaluationError;
-const Value = evaluate.Value;
+pub const Value = evaluate.Value;
 
-const Stack = std.ArrayListUnmanaged(Value);
+pub const Stack = std.ArrayListUnmanaged(Value);
 const Instruction = fn (Allocator, *Stack, []const u8) EvaluationError!void;
 const InstructionPointer = *const fn (Allocator, *Stack, []const u8) EvaluationError!void;
 
@@ -310,4 +310,8 @@ const instructions: []const InstructionPointer = names.values();
 
 pub fn opcode(comptime name: [:0]const u8) u8 {
     return @truncate(names.getIndex(name) orelse 0);
+}
+
+pub fn run(allocator: Allocator, stack: *Stack, program: []const u8) !void {
+    try instructions[program[0]](allocator, stack, program[1..]);
 }

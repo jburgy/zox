@@ -103,7 +103,7 @@ test emit {
     const tokens = try tokenize.tokens(allocator, buffer);
     defer allocator.free(tokens);
 
-    var nodes = try std.ArrayListUnmanaged(parse.Node).initCapacity(allocator, 16);
+    var nodes = try parse.Nodes.initCapacity(allocator, 16);
     defer nodes.deinit(allocator);
 
     const state = try parse.statements(&nodes, allocator, tokens, 0);

@@ -3,9 +3,18 @@ const mem = std.mem;
 const Allocator = mem.Allocator;
 const testing = std.testing;
 const assert = std.debug.assert;
-const Token = @import("tokenize.zig").Token;
-const Node = @import("parse.zig").Node;
-const opcode = @import("execute.zig").opcode;
+const tokenize = @import("tokenize.zig");
+const Token = tokenize.Token;
+const parse = @import("parse.zig");
+const Node = parse.Node;
+const exec = @import("execute.zig");
+const Value = exec.Value;
+const Stack = exec.Stack;
+const opcode = exec.opcode;
+const run = exec.run;
+comptime {
+    _ = @import("emit.zig");
+}
 
 const zero = mem.zeroes([@sizeOf(f64)]u8);
 // See https://github.com/ziglang/zig/pull/20074
@@ -32,6 +41,7 @@ pub fn compile(program: *std.ArrayList(u8), tokens: []const Token, nodes: []cons
             const index = node + 1;
             for (nodes[index .. index + count]) |arg|
                 try compile(program, tokens, nodes, arg.node);
+            try program.append(opcode("end"));
         },
         .NUMBER => {
             const num = try std.fmt.parseFloat(f64, token.src);
@@ -98,8 +108,40 @@ test compile {
     var actual = std.ArrayList(u8).init(testing.allocator);
     defer actual.deinit();
     const one = mem.toBytes(@as(f64, 1.0));
-    const expected = .{opcode("num")} ++ one ++ .{opcode("num")} ++ one ++ .{opcode("add")};
+    const expected = .{opcode("num")} ++ one ++ .{opcode("num")} ++ one ++ .{ opcode("add"), opcode("end") };
 
     try compile(&actual, tokens[0..], nodes[0..], 5);
     try testing.expectEqualStrings(expected[0..], actual.items);
+}
+
+pub fn execute(allocator: Allocator, source: []const u8) !Value {
+    const tokens = try tokenize.tokens(allocator, source);
+    defer allocator.free(tokens);
+
+    var nodes = try parse.Nodes.initCapacity(allocator, 16);
+    defer nodes.deinit(allocator);
+
+    const state = try parse.statements(&nodes, allocator, tokens, 0);
+    std.debug.assert(state.token == tokens.len - 1);
+    const root = state.node.node;
+    std.debug.assert(root + 1 + nodes.items[root].head.count == nodes.items.len);
+
+    var program = std.ArrayList(u8).init(allocator);
+    defer program.deinit();
+    try compile(&program, tokens, nodes.items, root);
+
+    var stack = try Stack.initCapacity(allocator, 16);
+    defer stack.deinit(allocator);
+    try run(allocator, &stack, program.items);
+
+    std.debug.assert(stack.items.len == 1);
+    return stack.pop();
+}
+
+test execute {
+    const allocator = testing.allocator;
+    try testing.expectEqual(
+        Value{ .number = 2.0 },
+        try execute(allocator, "1 + 1"),
+    );
 }

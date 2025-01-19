@@ -15,7 +15,7 @@ pub const Node = packed union {
     node: u32,
 };
 const State = struct { token: u24, node: Node };
-const Nodes = std.ArrayListUnmanaged(Node);
+pub const Nodes = std.ArrayListUnmanaged(Node);
 const MaxArgs = std.math.maxInt(std.meta.FieldType(std.meta.FieldType(Node, .head), .count));
 
 fn head(token: u24, count: u8) Node {
