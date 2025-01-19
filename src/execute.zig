@@ -29,14 +29,14 @@ fn str(allocator: Allocator, stack: *Stack, program: []const u8) EvaluationError
 }
 
 test str {
-    var buffer = [_]Value{.{ .nil = {} }} ** 1;
+    var buffer = [_]Value{.{ .nil = {} }};
     var stack = Stack.initBuffer(buffer[0..]);
     const expected = "Hello, World!";
     var program = .{opcode("str")} ++ expected ++ .{ 0, opcode("end") };
 
     try instructions[program[0]](testing.allocator, &stack, program[1..]);
     assert(stack.items.len == 1);
-    assert(mem.eql(u8, stack.pop().string, expected));
+    try testing.expectEqualStrings(expected, stack.pop().string);
 }
 
 fn num(allocator: Allocator, stack: *Stack, program: []const u8) EvaluationError!void {
@@ -57,6 +57,54 @@ test num {
     assert(stack.pop().number == 0.0);
 }
 
+fn pop(allocator: Allocator, stack: *Stack, program: []const u8) EvaluationError!void {
+    _ = stack.pop();
+    try @call(.always_tail, instructions[program[0]], .{ allocator, stack, program[1..] });
+}
+
+test pop {
+    var buffer = [_]Value{.{ .nil = {} }};
+    var stack = Stack.initBuffer(buffer[0..]);
+    const program = [_]u8{ opcode("pop"), opcode("end") };
+
+    stack.appendAssumeCapacity(.{ .bool = true });
+    try instructions[program[0]](testing.allocator, &stack, program[1..]);
+    assert(stack.items.len == 0);
+}
+
+fn dup(allocator: Allocator, stack: *Stack, program: []const u8) EvaluationError!void {
+    stack.appendAssumeCapacity(stack.getLast());
+    try @call(.always_tail, instructions[program[0]], .{ allocator, stack, program[1..] });
+}
+
+test dup {
+    var buffer = [_]Value{.{ .nil = {} }} ** 2;
+    var stack = Stack.initBuffer(buffer[0..]);
+    const program = [_]u8{ opcode("dup"), opcode("end") };
+
+    stack.appendAssumeCapacity(.{ .bool = true });
+    try instructions[program[0]](testing.allocator, &stack, program[1..]);
+    assert(stack.items.len == 2);
+    assert(stack.pop().bool);
+    assert(stack.pop().bool);
+}
+
+fn not(allocator: Allocator, stack: *Stack, program: []const u8) EvaluationError!void {
+    stack.appendAssumeCapacity(.{ .bool = !stack.pop().truthy() });
+    try @call(.always_tail, instructions[program[0]], .{ allocator, stack, program[1..] });
+}
+
+test not {
+    var buffer = [_]Value{.{ .nil = {} }};
+    var stack = Stack.initBuffer(buffer[0..]);
+    const program = [_]u8{ opcode("not"), opcode("end") };
+
+    stack.appendAssumeCapacity(.{ .bool = false });
+    try instructions[program[0]](testing.allocator, &stack, program[1..]);
+    assert(stack.items.len == 1);
+    assert(stack.pop().bool);
+}
+
 fn jmp(allocator: Allocator, stack: *Stack, program: []const u8) EvaluationError!void {
     const m = @sizeOf(usize);
     const n = mem.readInt(usize, program[0..m], native_endian) + m;
@@ -67,6 +115,12 @@ test jmp {
     var stack = Stack.initBuffer(&[_]Value{});
     const program = .{opcode("jmp")} ++ [_]u8{0} ** @sizeOf(usize) ++ .{opcode("end")};
     try instructions[program[0]](testing.allocator, &stack, program[1..]);
+}
+
+fn jif(allocator: Allocator, stack: *Stack, program: []const u8) EvaluationError!void {
+    const m = @sizeOf(usize);
+    const n = if (stack.pop().truthy()) m else mem.readInt(usize, program[0..m], native_endian) + m;
+    try @call(.always_tail, instructions[program[n]], .{ allocator, stack, program[n + 1 ..] });
 }
 
 fn binary(comptime op: fn (allocator: Allocator, a: Value, b: Value) EvaluationError!Value) Instruction {
@@ -230,7 +284,11 @@ const names = std.StaticStringMap(InstructionPointer).initComptime(.{
     .{ "end", &end },
     .{ "num", &num },
     .{ "str", &str },
+    .{ "pop", &pop },
+    .{ "dup", &dup },
+    .{ "not", &not },
     .{ "jmp", &jmp },
+    .{ "jif", &jif },
     .{ "add", &binary(add) },
     .{ "sub", &binary(sub) },
     .{ "mul", &binary(mul) },

@@ -144,5 +144,5 @@ test emit {
         \\(apply acc2 4.0))
     ;
 
-    try testing.expectEqualDeep(expected, actual.items);
+    try testing.expectEqualStrings(expected, actual.items);
 }

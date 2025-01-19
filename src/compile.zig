@@ -2,10 +2,12 @@ const std = @import("std");
 const mem = std.mem;
 const Allocator = mem.Allocator;
 const testing = std.testing;
+const assert = std.debug.assert;
 const Token = @import("tokenize.zig").Token;
 const Node = @import("parse.zig").Node;
 const opcode = @import("execute.zig").opcode;
 
+const zero = mem.zeroes([@sizeOf(f64)]u8);
 // See https://github.com/ziglang/zig/pull/20074
 const greedy = init: {
     var temp = std.EnumMap(Token.Tag, u8){};
@@ -15,6 +17,10 @@ const greedy = init: {
     temp.put(.PLUS, opcode("add"));
     temp.put(.SLASH, opcode("div"));
     temp.put(.STAR, opcode("mul"));
+    temp.put(.LESS, opcode("lt"));
+    temp.put(.LESS_EQUAL, opcode("lte"));
+    temp.put(.GREATER, opcode("gt"));
+    temp.put(.GREATER_EQUAL, opcode("gte"));
     break :init temp;
 };
 
@@ -33,16 +39,40 @@ pub fn compile(program: *std.ArrayList(u8), tokens: []const Token, nodes: []cons
             try program.append(opcode("num"));
             try program.appendSlice(buf[0..]);
         },
-        .BANG_EQUAL, .EQUAL_EQUAL, .MINUS, .PLUS, .SLASH, .STAR => {
+        .BANG_EQUAL, .EQUAL_EQUAL, .MINUS, .PLUS, .SLASH, .STAR, .LESS, .LESS_EQUAL, .GREATER, .GREATER_EQUAL => {
             if (count == 1) { // -x ⇒ 0 - x
                 try program.append(opcode("num"));
-                try program.appendSlice(&[_]u8{0x00} ** @sizeOf(f64));
+                try program.appendSlice(zero[0..]);
                 try compile(program, tokens, nodes, nodes[node + 1].node);
             } else {
+                assert(count == 2);
                 try compile(program, tokens, nodes, nodes[node + 1].node);
                 try compile(program, tokens, nodes, nodes[node + 2].node);
             }
             try program.append(greedy.get(token.tag).?);
+        },
+        .AND => { // if (a) a else b
+            assert(count == 2);
+            try compile(program, tokens, nodes, nodes[node + 1].node);
+            try program.append(opcode("dup"));
+            try program.append(opcode("jif"));
+            const offset = program.items.len;
+            try program.appendSlice(&zero);
+            try program.append(opcode("pop"));
+            try compile(program, tokens, nodes, nodes[node + 1].node);
+            program.replaceRangeAssumeCapacity(offset, offset + zero.len, &mem.toBytes(program.items.len - offset));
+        },
+        .OR => { // if (!a) a else b
+            assert(count == 2);
+            try compile(program, tokens, nodes, nodes[node + 1].node);
+            try program.append(opcode("dup"));
+            try program.append(opcode("not"));
+            try program.append(opcode("jif"));
+            const offset = program.items.len;
+            try program.appendSlice(&zero);
+            try program.append(opcode("pop"));
+            try compile(program, tokens, nodes, nodes[node + 1].node);
+            program.replaceRangeAssumeCapacity(offset, offset + zero.len, &mem.toBytes(program.items.len - offset));
         },
         else => @panic("not supported"),
     }
@@ -67,9 +97,9 @@ test compile {
     };
     var actual = std.ArrayList(u8).init(testing.allocator);
     defer actual.deinit();
-    const one = [_]u8{0x00} ** (@sizeOf(f64) - 2) ++ .{ 0xf0, 0x3f };
+    const one = mem.toBytes(@as(f64, 1.0));
     const expected = .{opcode("num")} ++ one ++ .{opcode("num")} ++ one ++ .{opcode("add")};
 
     try compile(&actual, tokens[0..], nodes[0..], 5);
-    try testing.expectEqualDeep(expected[0..], actual.items);
+    try testing.expectEqualStrings(expected[0..], actual.items);
 }

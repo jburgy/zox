@@ -433,6 +433,6 @@ test statements {
     for (cases) |case| {
         const actual = try helper(allocator, case.buffer);
         defer allocator.free(actual);
-        try testing.expect(std.mem.eql(u8, mem.asBytes(case.expected), mem.asBytes(actual)));
+        try testing.expectEqualStrings(mem.asBytes(case.expected), mem.asBytes(actual));
     }
 }
