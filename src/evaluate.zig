@@ -18,7 +18,7 @@ pub const EvaluationError = error{
     WrongArgCount,
 };
 
-const ValueType = enum {
+pub const ValueType = enum {
     nil,
     bool,
     string,
@@ -54,7 +54,7 @@ fn wrap(comptime function: anytype) Value {
     }.call };
 }
 
-pub const Value = union(ValueType) {
+const Value = union(ValueType) {
     nil: void,
     bool: bool,
     string: []const u8,

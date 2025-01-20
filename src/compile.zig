@@ -9,6 +9,7 @@ const parse = @import("parse.zig");
 const Node = parse.Node;
 const exec = @import("execute.zig");
 const Value = exec.Value;
+const Values = exec.Values;
 const Stack = exec.Stack;
 const opcode = exec.opcode;
 const run = exec.run;
@@ -132,7 +133,8 @@ pub fn execute(allocator: Allocator, source: []const u8) !Value {
 
     var stack = try Stack.initCapacity(allocator, 16);
     defer stack.deinit(allocator);
-    try run(allocator, &stack, program.items);
+    var values = Values{};
+    try run(allocator, &stack, program.items, &values);
 
     std.debug.assert(stack.items.len == 1);
     return stack.pop();
