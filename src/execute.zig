@@ -31,7 +31,8 @@ pub const Value = union(evaluate.ValueType) {
     }
 };
 
-pub const Values = std.SinglyLinkedList([]const Value);
+pub const Values = std.SinglyLinkedList([]Value);
+pub const Index = packed struct(u32) { depth: u8, index: u24 };
 
 fn end(allocator: Allocator, stack: *Stack, program: []const u8, values: *Values) !void {
     _ = allocator;
@@ -70,8 +71,7 @@ fn num(allocator: Allocator, stack: *Stack, program: []const u8, values: *Values
 
 test num {
     var stack = test_stack(2);
-    const t = NumberType;
-    const program = .{opcode("num")} ++ mem.toBytes(@as(t, 0.0)) ++ .{opcode("num")} ++ mem.toBytes(math.nan(t)) ++ .{opcode("end")};
+    const program = .{opcode("num")} ++ mem.toBytes(@as(NumberType, 0.0)) ++ .{opcode("num")} ++ mem.toBytes(math.nan(NumberType)) ++ .{opcode("end")};
     var values = Values{};
 
     try instructions[program[0]](testing.allocator, &stack, program[1..], &values);
@@ -126,6 +126,53 @@ test not {
     try instructions[program[0]](testing.allocator, &stack, program[1..], &values);
     try testing.expectEqual(1, stack.items.len);
     try testing.expect(stack.pop().bool);
+}
+
+fn get(allocator: Allocator, stack: *Stack, program: []const u8, values: *Values) EvaluationError!void {
+    const n = @sizeOf(Index);
+    const i: Index = @bitCast(program[0..n].*);
+
+    var p = values.first;
+    for (0..i.depth) |_| p = p.?.next;
+    stack.appendAssumeCapacity(p.?.data[i.index]);
+    try @call(.always_tail, instructions[program[n]], .{ allocator, stack, program[n + 1 ..], values });
+}
+
+test get {
+    var stack = test_stack(1);
+    const program = .{opcode("get")} ++ mem.toBytes(Index{ .depth = 0, .index = 0 }) ++ .{opcode("end")};
+    var values = Values{};
+    var locals = [_]Value{.{ .string = "Hello, world!" }};
+    var scope = Values.Node{ .data = locals[0..] };
+
+    values.prepend(&scope);
+    try instructions[program[0]](testing.allocator, &stack, program[1..], &values);
+    try testing.expectEqual(1, stack.items.len);
+    try testing.expectEqualStrings("Hello, world!", stack.pop().string);
+}
+
+fn set(allocator: Allocator, stack: *Stack, program: []const u8, values: *Values) EvaluationError!void {
+    const n = @sizeOf(Index);
+    const i: Index = @bitCast(program[0..n].*);
+
+    var p = values.first;
+    for (0..i.depth) |_| p = p.?.next;
+    p.?.data[i.index] = stack.pop();
+    try @call(.always_tail, instructions[program[n]], .{ allocator, stack, program[n + 1 ..], values });
+}
+
+test set {
+    var stack = test_stack(1);
+    const program = .{opcode("set")} ++ mem.toBytes(Index{ .depth = 0, .index = 0 }) ++ .{opcode("end")};
+    var values = Values{};
+    var locals = [_]Value{.{ .nil = {} }};
+    var scope = Values.Node{ .data = locals[0..] };
+
+    values.prepend(&scope);
+    stack.appendAssumeCapacity(.{ .string = "Hello, world!" });
+    try instructions[program[0]](testing.allocator, &stack, program[1..], &values);
+    try testing.expectEqual(0, stack.items.len);
+    try testing.expectEqualStrings("Hello, world!", locals[0].string);
 }
 
 fn jmp(allocator: Allocator, stack: *Stack, program: []const u8, values: *Values) EvaluationError!void {
@@ -322,6 +369,8 @@ const names = std.StaticStringMap(InstructionPointer).initComptime(.{
     .{ "pop", &pop },
     .{ "dup", &dup },
     .{ "not", &not },
+    .{ "get", &get },
+    .{ "set", &set },
     .{ "jmp", &jmp },
     .{ "jif", &jif },
     .{ "add", &binary(add) },

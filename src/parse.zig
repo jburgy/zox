@@ -217,9 +217,9 @@ fn expression(nodes: *Nodes, allocator: Allocator, tokens: []const Token, index:
     while (true) {
         switch (tokens[result.token].tag) {
             .EQUAL, .OR, .AND => {
-                const next = try expression(nodes, allocator, tokens, result.token + 1);
-                const node = try appendNode(nodes, allocator, result.token, &.{ result.node, next.node });
-                result = .{ .token = next.token, .node = node };
+                const next = try equality(nodes, allocator, tokens, result.token + 1);
+                result.node = try appendNode(nodes, allocator, result.token, &.{ result.node, next.node });
+                result.token = next.token;
             },
             else => break,
         }
@@ -233,8 +233,8 @@ fn equality(nodes: *Nodes, allocator: Allocator, tokens: []const Token, index: u
         switch (tokens[result.token].tag) {
             .EQUAL_EQUAL, .BANG_EQUAL => {
                 const next = try comparison(nodes, allocator, tokens, result.token + 1);
-                const node = try appendNode(nodes, allocator, result.token, &.{ result.node, next.node });
-                result = .{ .token = next.token, .node = node };
+                result.node = try appendNode(nodes, allocator, result.token, &.{ result.node, next.node });
+                result.token = next.token;
             },
             else => break,
         }
@@ -248,8 +248,8 @@ fn comparison(nodes: *Nodes, allocator: Allocator, tokens: []const Token, index:
         switch (tokens[result.token].tag) {
             .LESS, .LESS_EQUAL, .GREATER, .GREATER_EQUAL => {
                 const next = try term(nodes, allocator, tokens, result.token + 1);
-                const node = try appendNode(nodes, allocator, result.token, &.{ result.node, next.node });
-                result = .{ .token = next.token, .node = node };
+                result.node = try appendNode(nodes, allocator, result.token, &.{ result.node, next.node });
+                result.token = next.token;
             },
             else => break,
         }
@@ -263,8 +263,8 @@ fn term(nodes: *Nodes, allocator: Allocator, tokens: []const Token, index: u24) 
         switch (tokens[result.token].tag) {
             .MINUS, .PLUS => {
                 const next = try factor(nodes, allocator, tokens, result.token + 1);
-                const node = try appendNode(nodes, allocator, result.token, &.{ result.node, next.node });
-                result = .{ .token = next.token, .node = node };
+                result.node = try appendNode(nodes, allocator, result.token, &.{ result.node, next.node });
+                result.token = next.token;
             },
             else => break,
         }
@@ -278,8 +278,8 @@ fn factor(nodes: *Nodes, allocator: Allocator, tokens: []const Token, token: u24
         switch (tokens[result.token].tag) {
             .STAR, .SLASH => {
                 const next = try unary(nodes, allocator, tokens, result.token + 1);
-                const node = try appendNode(nodes, allocator, result.token, &.{ result.node, next.node });
-                result = .{ .token = next.token, .node = node };
+                result.node = try appendNode(nodes, allocator, result.token, &.{ result.node, next.node });
+                result.token = next.token;
             },
             else => break,
         }
@@ -310,7 +310,7 @@ fn finishCall(nodes: *Nodes, allocator: Allocator, tokens: []const Token, func: 
     var buffer: [MaxArgs]Node = undefined;
     var args = Nodes.initBuffer(buffer[0..]);
 
-    try args.append(allocator, func.node);
+    args.appendAssumeCapacity(func.node);
     while (tokens[index].tag != .RIGHT_PAREN) {
         const state = try expression(nodes, allocator, tokens, index);
         args.appendAssumeCapacity(state.node);
