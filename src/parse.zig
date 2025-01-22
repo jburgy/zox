@@ -225,7 +225,9 @@ fn repeat(comptime child: Matcher, comptime tags: []const Token.Tag) Matcher {
     return struct {
         pub fn match(nodes: *Nodes, tokens: []const Token, token: u24) ParseError!State {
             var result = try child(nodes, tokens, token);
-            while (mem.indexOfScalar(Token.Tag, tags, tokens[result.token].tag)) |_| {
+            while (inline for (tags) |tag| {
+                if (tokens[result.token].tag == tag) break true;
+            } else false) {
                 const next = try child(nodes, tokens, result.token + 1);
                 result.node = try appendNode(nodes, result.token, &.{ result.node, next.node });
                 result.token = next.token;
