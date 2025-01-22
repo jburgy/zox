@@ -15,7 +15,8 @@ pub const Node = packed union {
     node: u32,
 };
 const State = struct { token: u24, node: Node };
-pub const Nodes = std.ArrayListUnmanaged(Node);
+pub const Nodes = std.ArrayList(Node);
+const Args = std.ArrayListUnmanaged(Node);
 const MaxArgs = std.math.maxInt(std.meta.FieldType(std.meta.FieldType(Node, .head), .count));
 
 fn head(token: u24, count: u8) Node {
@@ -26,23 +27,23 @@ fn ref(node: u32) Node {
     return .{ .node = node };
 }
 
-fn appendNode(nodes: *Nodes, allocator: Allocator, token: u24, args: []const Node) Allocator.Error!Node {
+fn appendNode(nodes: *Nodes, token: u24, args: []const Node) Allocator.Error!Node {
     const node = Node{ .node = @truncate(nodes.items.len) };
-    try nodes.append(allocator, head(token, @truncate(args.len)));
-    try nodes.appendSlice(allocator, args);
+    try nodes.append(head(token, @truncate(args.len)));
+    try nodes.appendSlice(args);
     return node;
 }
 
-pub fn statements(nodes: *Nodes, allocator: Allocator, tokens: []const Token, start: u24) ParseError!State {
+pub fn statements(nodes: *Nodes, tokens: []const Token, start: u24) ParseError!State {
     var token = start;
     var buffer: [MaxArgs]Node = undefined;
-    var args = Nodes.initBuffer(buffer[0..]);
+    var args = Args.initBuffer(buffer[0..]);
 
     while (true) {
         switch (tokens[token].tag) {
             .RIGHT_BRACE, .EOF => break,
             else => {
-                const state = try statement(nodes, allocator, tokens, token);
+                const state = try statement(nodes, tokens, token);
                 args.appendAssumeCapacity(state.node);
                 token = state.token + @intFromBool(tokens[state.token].tag == .SEMICOLON);
             },
@@ -50,17 +51,17 @@ pub fn statements(nodes: *Nodes, allocator: Allocator, tokens: []const Token, st
     }
     return .{
         .token = token,
-        .node = try appendNode(nodes, allocator, token, args.items),
+        .node = try appendNode(nodes, token, args.items),
     };
 }
 
-fn statement(nodes: *Nodes, allocator: Allocator, tokens: []const Token, token: u24) ParseError!State {
+fn statement(nodes: *Nodes, tokens: []const Token, token: u24) ParseError!State {
     return switch (tokens[token].tag) {
         .PRINT => blk: {
-            const next = try expression(nodes, allocator, tokens, token + 1);
+            const next = try expression(nodes, tokens, token + 1);
             break :blk .{
                 .token = next.token,
-                .node = try appendNode(nodes, allocator, token, &.{next.node}),
+                .node = try appendNode(nodes, token, &.{next.node}),
             };
         },
         .VAR => blk: {
@@ -70,17 +71,17 @@ fn statement(nodes: *Nodes, allocator: Allocator, tokens: []const Token, token: 
             if (tokens[token + 2].tag == .SEMICOLON)
                 break :blk .{
                     .token = token + 2,
-                    .node = try appendNode(nodes, allocator, token, &.{head(token + 1, 0)}),
+                    .node = try appendNode(nodes, token, &.{head(token + 1, 0)}),
                 };
 
-            const next = try expression(nodes, allocator, tokens, token + 3);
+            const next = try expression(nodes, tokens, token + 3);
             break :blk .{
                 .token = next.token,
-                .node = try appendNode(nodes, allocator, token, &.{ head(token + 1, 0), next.node }),
+                .node = try appendNode(nodes, token, &.{ head(token + 1, 0), next.node }),
             };
         },
         .LEFT_BRACE => blk: {
-            const next = try statements(nodes, allocator, tokens, token + 1);
+            const next = try statements(nodes, tokens, token + 1);
             break :blk if (tokens[next.token].tag != .RIGHT_BRACE)
                 error.UnexpectedToken
             else
@@ -89,34 +90,34 @@ fn statement(nodes: *Nodes, allocator: Allocator, tokens: []const Token, token: 
         .IF => blk: {
             if (tokens[token + 1].tag != .LEFT_PAREN)
                 break :blk error.UnexpectedToken;
-            const cond = try expression(nodes, allocator, tokens, token + 2);
+            const cond = try expression(nodes, tokens, token + 2);
             if (tokens[cond.token].tag != .RIGHT_PAREN)
                 break :blk error.UnexpectedToken;
 
-            const body = try statement(nodes, allocator, tokens, cond.token + 1);
+            const body = try statement(nodes, tokens, cond.token + 1);
             if (tokens[body.token].tag == .ELSE) {
-                const tail = try statement(nodes, allocator, tokens, body.token + 1);
+                const tail = try statement(nodes, tokens, body.token + 1);
                 break :blk .{
                     .token = tail.token,
-                    .node = try appendNode(nodes, allocator, token, &.{ cond.node, body.node, tail.node }),
+                    .node = try appendNode(nodes, token, &.{ cond.node, body.node, tail.node }),
                 };
             } else {
                 break :blk .{
                     .token = body.token,
-                    .node = try appendNode(nodes, allocator, token, &.{ cond.node, body.node }),
+                    .node = try appendNode(nodes, token, &.{ cond.node, body.node }),
                 };
             }
         },
         .WHILE => blk: {
             switch (tokens[token + 1].tag) {
                 .LEFT_PAREN => {
-                    const cond = try expression(nodes, allocator, tokens, token + 2);
+                    const cond = try expression(nodes, tokens, token + 2);
                     switch (tokens[cond.token].tag) {
                         .RIGHT_PAREN => {
-                            const body = try statement(nodes, allocator, tokens, cond.token + 1);
+                            const body = try statement(nodes, tokens, cond.token + 1);
                             break :blk .{
                                 .token = body.token,
-                                .node = try appendNode(nodes, allocator, token, &.{body.node}),
+                                .node = try appendNode(nodes, token, &.{body.node}),
                             };
                         },
                         else => break :blk error.UnexpectedToken,
@@ -132,37 +133,37 @@ fn statement(nodes: *Nodes, allocator: Allocator, tokens: []const Token, token: 
             const init: State = switch (tokens[token + 2].tag) {
                 .SEMICOLON => .{
                     .token = token + 2,
-                    .node = try appendNode(nodes, allocator, token + 2, &.{}),
+                    .node = try appendNode(nodes, token + 2, &.{}),
                 },
                 .LEFT_BRACE => break :blk error.UnexpectedToken,
-                else => try statement(nodes, allocator, tokens, token + 2),
+                else => try statement(nodes, tokens, token + 2),
             };
             if (tokens[init.token].tag != .SEMICOLON)
                 break :blk error.UnexpectedToken;
 
-            const cond = try expression(nodes, allocator, tokens, init.token + 1);
+            const cond = try expression(nodes, tokens, init.token + 1);
             if (tokens[cond.token].tag != .SEMICOLON)
                 break :blk error.UnexpectedToken;
 
             const incr = switch (tokens[cond.token + 1].tag) {
                 .RIGHT_PAREN => State{
                     .token = cond.token + 1,
-                    .node = try appendNode(nodes, allocator, cond.token, &.{}),
+                    .node = try appendNode(nodes, cond.token, &.{}),
                 },
-                else => try expression(nodes, allocator, tokens, cond.token + 1),
+                else => try expression(nodes, tokens, cond.token + 1),
             };
             if (tokens[incr.token].tag != .RIGHT_PAREN)
                 break :blk error.UnexpectedToken;
-            const body = try statement(nodes, allocator, tokens, incr.token + 1);
+            const body = try statement(nodes, tokens, incr.token + 1);
             break :blk .{
                 .token = body.token,
-                .node = try appendNode(nodes, allocator, token, &.{ init.node, cond.node, body.node, incr.node }),
+                .node = try appendNode(nodes, token, &.{ init.node, cond.node, body.node, incr.node }),
             };
         },
         .FUN => blk: {
             var index = token + 1;
             var buffer: [MaxArgs]Node = undefined;
-            var args = Nodes.initBuffer(buffer[0..]);
+            var args = Args.initBuffer(buffer[0..]);
 
             if (tokens[index].tag != .IDENTIFIER)
                 break :blk error.UnexpectedToken;
@@ -190,35 +191,35 @@ fn statement(nodes: *Nodes, allocator: Allocator, tokens: []const Token, token: 
             if (tokens[index + 1].tag != .LEFT_BRACE)
                 break :blk error.UnexpectedToken;
 
-            const body = try statement(nodes, allocator, tokens, index + 1);
+            const body = try statement(nodes, tokens, index + 1);
             args.appendAssumeCapacity(body.node);
 
             break :blk .{
                 .token = body.token,
-                .node = try appendNode(nodes, allocator, token, args.items),
+                .node = try appendNode(nodes, token, args.items),
             };
         },
         .RETURN => blk: {
             if (tokens[token + 1].tag == .SEMICOLON)
-                break :blk .{ .token = token + 1, .node = try appendNode(nodes, allocator, token, &.{}) };
+                break :blk .{ .token = token + 1, .node = try appendNode(nodes, token, &.{}) };
 
-            const result = try expression(nodes, allocator, tokens, token + 1);
+            const result = try expression(nodes, tokens, token + 1);
             break :blk .{
                 .token = result.token,
-                .node = try appendNode(nodes, allocator, token, &.{result.node}),
+                .node = try appendNode(nodes, token, &.{result.node}),
             };
         },
-        else => try expression(nodes, allocator, tokens, token),
+        else => try expression(nodes, tokens, token),
     };
 }
 
-fn expression(nodes: *Nodes, allocator: Allocator, tokens: []const Token, index: u24) ParseError!State {
-    var result = try equality(nodes, allocator, tokens, index);
+fn expression(nodes: *Nodes, tokens: []const Token, index: u24) ParseError!State {
+    var result = try equality(nodes, tokens, index);
     while (true) {
         switch (tokens[result.token].tag) {
             .EQUAL, .OR, .AND => {
-                const next = try equality(nodes, allocator, tokens, result.token + 1);
-                result.node = try appendNode(nodes, allocator, result.token, &.{ result.node, next.node });
+                const next = try equality(nodes, tokens, result.token + 1);
+                result.node = try appendNode(nodes, result.token, &.{ result.node, next.node });
                 result.token = next.token;
             },
             else => break,
@@ -227,13 +228,13 @@ fn expression(nodes: *Nodes, allocator: Allocator, tokens: []const Token, index:
     return result;
 }
 
-fn equality(nodes: *Nodes, allocator: Allocator, tokens: []const Token, index: u24) ParseError!State {
-    var result = try comparison(nodes, allocator, tokens, index);
+fn equality(nodes: *Nodes, tokens: []const Token, index: u24) ParseError!State {
+    var result = try comparison(nodes, tokens, index);
     while (true) {
         switch (tokens[result.token].tag) {
             .EQUAL_EQUAL, .BANG_EQUAL => {
-                const next = try comparison(nodes, allocator, tokens, result.token + 1);
-                result.node = try appendNode(nodes, allocator, result.token, &.{ result.node, next.node });
+                const next = try comparison(nodes, tokens, result.token + 1);
+                result.node = try appendNode(nodes, result.token, &.{ result.node, next.node });
                 result.token = next.token;
             },
             else => break,
@@ -242,13 +243,13 @@ fn equality(nodes: *Nodes, allocator: Allocator, tokens: []const Token, index: u
     return result;
 }
 
-fn comparison(nodes: *Nodes, allocator: Allocator, tokens: []const Token, index: u24) ParseError!State {
-    var result = try term(nodes, allocator, tokens, index);
+fn comparison(nodes: *Nodes, tokens: []const Token, index: u24) ParseError!State {
+    var result = try term(nodes, tokens, index);
     while (true) {
         switch (tokens[result.token].tag) {
             .LESS, .LESS_EQUAL, .GREATER, .GREATER_EQUAL => {
-                const next = try term(nodes, allocator, tokens, result.token + 1);
-                result.node = try appendNode(nodes, allocator, result.token, &.{ result.node, next.node });
+                const next = try term(nodes, tokens, result.token + 1);
+                result.node = try appendNode(nodes, result.token, &.{ result.node, next.node });
                 result.token = next.token;
             },
             else => break,
@@ -257,13 +258,13 @@ fn comparison(nodes: *Nodes, allocator: Allocator, tokens: []const Token, index:
     return result;
 }
 
-fn term(nodes: *Nodes, allocator: Allocator, tokens: []const Token, index: u24) ParseError!State {
-    var result = try factor(nodes, allocator, tokens, index);
+fn term(nodes: *Nodes, tokens: []const Token, index: u24) ParseError!State {
+    var result = try factor(nodes, tokens, index);
     while (true) {
         switch (tokens[result.token].tag) {
             .MINUS, .PLUS => {
-                const next = try factor(nodes, allocator, tokens, result.token + 1);
-                result.node = try appendNode(nodes, allocator, result.token, &.{ result.node, next.node });
+                const next = try factor(nodes, tokens, result.token + 1);
+                result.node = try appendNode(nodes, result.token, &.{ result.node, next.node });
                 result.token = next.token;
             },
             else => break,
@@ -272,13 +273,13 @@ fn term(nodes: *Nodes, allocator: Allocator, tokens: []const Token, index: u24) 
     return result;
 }
 
-fn factor(nodes: *Nodes, allocator: Allocator, tokens: []const Token, token: u24) ParseError!State {
-    var result = try unary(nodes, allocator, tokens, token);
+fn factor(nodes: *Nodes, tokens: []const Token, token: u24) ParseError!State {
+    var result = try unary(nodes, tokens, token);
     while (true) {
         switch (tokens[result.token].tag) {
             .STAR, .SLASH => {
-                const next = try unary(nodes, allocator, tokens, result.token + 1);
-                result.node = try appendNode(nodes, allocator, result.token, &.{ result.node, next.node });
+                const next = try unary(nodes, tokens, result.token + 1);
+                result.node = try appendNode(nodes, result.token, &.{ result.node, next.node });
                 result.token = next.token;
             },
             else => break,
@@ -287,49 +288,49 @@ fn factor(nodes: *Nodes, allocator: Allocator, tokens: []const Token, token: u24
     return result;
 }
 
-fn unary(nodes: *Nodes, allocator: Allocator, tokens: []const Token, token: u24) ParseError!State {
+fn unary(nodes: *Nodes, tokens: []const Token, token: u24) ParseError!State {
     return switch (tokens[token].tag) {
         .BANG, .MINUS => blk: {
-            const next = try unary(nodes, allocator, tokens, token + 1);
-            const node = try appendNode(nodes, allocator, token, &.{next.node});
+            const next = try unary(nodes, tokens, token + 1);
+            const node = try appendNode(nodes, token, &.{next.node});
             break :blk .{ .token = next.token, .node = node };
         },
-        else => try call(nodes, allocator, tokens, token),
+        else => try call(nodes, tokens, token),
     };
 }
 
-fn call(nodes: *Nodes, allocator: Allocator, tokens: []const Token, token: u24) ParseError!State {
-    var result = try primary(nodes, allocator, tokens, token);
+fn call(nodes: *Nodes, tokens: []const Token, token: u24) ParseError!State {
+    var result = try primary(nodes, tokens, token);
     while (tokens[result.token].tag == .LEFT_PAREN)
-        result = try finishCall(nodes, allocator, tokens, result);
+        result = try finishCall(nodes, tokens, result);
     return result;
 }
 
-fn finishCall(nodes: *Nodes, allocator: Allocator, tokens: []const Token, func: State) ParseError!State {
+fn finishCall(nodes: *Nodes, tokens: []const Token, func: State) ParseError!State {
     var index = func.token + 1;
     var buffer: [MaxArgs]Node = undefined;
-    var args = Nodes.initBuffer(buffer[0..]);
+    var args = Args.initBuffer(buffer[0..]);
 
     args.appendAssumeCapacity(func.node);
     while (tokens[index].tag != .RIGHT_PAREN) {
-        const state = try expression(nodes, allocator, tokens, index);
+        const state = try expression(nodes, tokens, index);
         args.appendAssumeCapacity(state.node);
         index = state.token + @intFromBool(tokens[state.token].tag == .COMMA);
     }
     return .{
         .token = index + 1,
-        .node = try appendNode(nodes, allocator, index, args.items),
+        .node = try appendNode(nodes, index, args.items),
     };
 }
 
-fn primary(nodes: *Nodes, allocator: Allocator, tokens: []const Token, token: u24) ParseError!State {
+fn primary(nodes: *Nodes, tokens: []const Token, token: u24) ParseError!State {
     return switch (tokens[token].tag) {
         .NIL, .FALSE, .TRUE, .NUMBER, .STRING, .IDENTIFIER => .{
             .token = token + 1,
-            .node = try appendNode(nodes, allocator, token, &.{}),
+            .node = try appendNode(nodes, token, &.{}),
         },
         .LEFT_PAREN => blk: {
-            const state = try expression(nodes, allocator, tokens, token + 1);
+            const state = try expression(nodes, tokens, token + 1);
             break :blk switch (tokens[state.token].tag) {
                 .RIGHT_PAREN => .{ .token = state.token + 1, .node = state.node },
                 else => error.UnexpectedToken,
@@ -343,15 +344,15 @@ fn helper(allocator: Allocator, buffer: []const u8) ![]const Node {
     const tokens = try tokenize.tokens(allocator, buffer);
     defer allocator.free(tokens);
 
-    var nodes = try Nodes.initCapacity(allocator, 16);
-    defer nodes.deinit(allocator);
+    var nodes = Nodes.init(allocator);
+    defer nodes.deinit();
 
-    const state = try statements(&nodes, allocator, tokens, 0);
+    const state = try statements(&nodes, tokens, 0);
     std.debug.assert(tokens[state.token].tag == .EOF);
     const root = state.node.node;
     std.debug.assert(root + 1 + nodes.items[root].head.count == nodes.items.len);
 
-    return nodes.toOwnedSlice(allocator);
+    return nodes.toOwnedSlice();
 }
 
 test statements {

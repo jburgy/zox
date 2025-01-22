@@ -433,10 +433,10 @@ pub fn evaluate(allocator: Allocator, source: []const u8, writer: anytype) !Valu
     const tokens = try tokenize.tokens(allocator, source);
     defer allocator.free(tokens);
 
-    var nodes = try parse.Nodes.initCapacity(allocator, 16);
-    defer nodes.deinit(allocator);
+    var nodes = parse.Nodes.init(allocator);
+    defer nodes.deinit();
 
-    const state = try parse.statements(&nodes, allocator, tokens, 0);
+    const state = try parse.statements(&nodes, tokens, 0);
     std.debug.assert(state.token == tokens.len - 1);
     const root = state.node.node;
     std.debug.assert(root + 1 + nodes.items[root].head.count == nodes.items.len);
