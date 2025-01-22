@@ -18,6 +18,7 @@ const State = struct { token: u24, node: Node };
 pub const Nodes = std.ArrayList(Node);
 const Args = std.ArrayListUnmanaged(Node);
 const MaxArgs = std.math.maxInt(std.meta.FieldType(std.meta.FieldType(Node, .head), .count));
+const Matcher = fn (*Nodes, []const Token, u24) ParseError!State;
 
 fn head(token: u24, count: u8) Node {
     return .{ .head = .{ .token = token, .count = count } };
@@ -213,79 +214,25 @@ fn statement(nodes: *Nodes, tokens: []const Token, token: u24) ParseError!State 
     };
 }
 
-fn expression(nodes: *Nodes, tokens: []const Token, index: u24) ParseError!State {
-    var result = try equality(nodes, tokens, index);
-    while (true) {
-        switch (tokens[result.token].tag) {
-            .EQUAL, .OR, .AND => {
-                const next = try equality(nodes, tokens, result.token + 1);
-                result.node = try appendNode(nodes, result.token, &.{ result.node, next.node });
-                result.token = next.token;
-            },
-            else => break,
-        }
-    }
-    return result;
-}
+const expression = repeat(equality, &.{ .EQUAL, .OR, .AND });
+const equality = repeat(comparison, &.{ .EQUAL_EQUAL, .BANG_EQUAL });
+const comparison = repeat(term, &.{ .LESS, .LESS_EQUAL, .GREATER, .GREATER_EQUAL });
+const term = repeat(factor, &.{ .MINUS, .PLUS });
+const factor = repeat(unary, &.{ .STAR, .SLASH });
 
-fn equality(nodes: *Nodes, tokens: []const Token, index: u24) ParseError!State {
-    var result = try comparison(nodes, tokens, index);
-    while (true) {
-        switch (tokens[result.token].tag) {
-            .EQUAL_EQUAL, .BANG_EQUAL => {
-                const next = try comparison(nodes, tokens, result.token + 1);
+/// match child ([tags] child)*
+fn repeat(comptime child: Matcher, comptime tags: []const Token.Tag) Matcher {
+    return struct {
+        pub fn match(nodes: *Nodes, tokens: []const Token, token: u24) ParseError!State {
+            var result = try child(nodes, tokens, token);
+            while (mem.indexOfScalar(Token.Tag, tags, tokens[result.token].tag)) |_| {
+                const next = try child(nodes, tokens, result.token + 1);
                 result.node = try appendNode(nodes, result.token, &.{ result.node, next.node });
                 result.token = next.token;
-            },
-            else => break,
+            }
+            return result;
         }
-    }
-    return result;
-}
-
-fn comparison(nodes: *Nodes, tokens: []const Token, index: u24) ParseError!State {
-    var result = try term(nodes, tokens, index);
-    while (true) {
-        switch (tokens[result.token].tag) {
-            .LESS, .LESS_EQUAL, .GREATER, .GREATER_EQUAL => {
-                const next = try term(nodes, tokens, result.token + 1);
-                result.node = try appendNode(nodes, result.token, &.{ result.node, next.node });
-                result.token = next.token;
-            },
-            else => break,
-        }
-    }
-    return result;
-}
-
-fn term(nodes: *Nodes, tokens: []const Token, index: u24) ParseError!State {
-    var result = try factor(nodes, tokens, index);
-    while (true) {
-        switch (tokens[result.token].tag) {
-            .MINUS, .PLUS => {
-                const next = try factor(nodes, tokens, result.token + 1);
-                result.node = try appendNode(nodes, result.token, &.{ result.node, next.node });
-                result.token = next.token;
-            },
-            else => break,
-        }
-    }
-    return result;
-}
-
-fn factor(nodes: *Nodes, tokens: []const Token, token: u24) ParseError!State {
-    var result = try unary(nodes, tokens, token);
-    while (true) {
-        switch (tokens[result.token].tag) {
-            .STAR, .SLASH => {
-                const next = try unary(nodes, tokens, result.token + 1);
-                result.node = try appendNode(nodes, result.token, &.{ result.node, next.node });
-                result.token = next.token;
-            },
-            else => break,
-        }
-    }
-    return result;
+    }.match;
 }
 
 fn unary(nodes: *Nodes, tokens: []const Token, token: u24) ParseError!State {
@@ -431,7 +378,7 @@ test statements {
             ref(10),
         } },
     };
-    for (cases) |case| {
+    inline for (cases) |case| {
         const actual = try helper(allocator, case.buffer);
         defer allocator.free(actual);
         try testing.expectEqualStrings(mem.asBytes(case.expected), mem.asBytes(actual));
