@@ -6,50 +6,31 @@ const mem = std.mem;
 const Allocator = std.mem.Allocator;
 const native_endian = builtin.cpu.arch.endian();
 const evaluate = @import("evaluate.zig");
-const EvaluationError = evaluate.EvaluationError;
+const value = @import("value.zig");
 
-pub const Stack = std.ArrayListUnmanaged(Value);
-const Instruction = fn (Allocator, *Stack, []const u8, *Values) EvaluationError!void;
-const InstructionPointer = *const fn (Allocator, *Stack, []const u8, *Values) EvaluationError!void;
+pub const Stack = std.ArrayListUnmanaged(f64);
+const Instruction = fn (Allocator, *Stack, []const u8, *Values) void;
+const InstructionPointer = *const fn (Allocator, *Stack, []const u8, *Values) void;
 
-const NumberType = f64;
-pub const Value = union(evaluate.ValueType) {
-    nil: void,
-    bool: bool,
-    string: []const u8,
-    number: NumberType,
-    native: *const fn ([]const Value) Value,
-    function: struct { code: []const u8, first: *Values.Node },
-
-    pub fn truthy(value: @This()) bool {
-        return switch (value) {
-            .nil => false,
-            .bool => |b| b,
-            .string, .native, .function => true,
-            .number => |x| x != 0.0,
-        };
-    }
-};
-
-pub const Values = std.SinglyLinkedList([]Value);
+pub const Values = std.SinglyLinkedList([]f64);
 pub const Index = packed struct(u32) { depth: u8, index: u24 };
 
-fn end(allocator: Allocator, stack: *Stack, program: []const u8, values: *Values) !void {
+fn test_stack(n: comptime_int) Stack {
+    return Stack.initBuffer(@constCast(&[_]f64{math.nan(f64)} ** n));
+}
+
+fn end(allocator: Allocator, stack: *Stack, program: []const u8, values: *Values) void {
     _ = allocator;
     _ = stack;
     _ = values;
     std.debug.assert(program.len == 0);
 }
 
-fn str(allocator: Allocator, stack: *Stack, program: []const u8, values: *Values) EvaluationError!void {
+fn str(allocator: Allocator, stack: *Stack, program: []const u8, values: *Values) void {
     const s = mem.sliceTo(program, 0);
     const n = s.len + 1; // skip past nil sentinel
-    stack.appendAssumeCapacity(.{ .string = program[0..s.len] });
-    try @call(.always_tail, instructions[program[n]], .{ allocator, stack, program[n + 1 ..], values });
-}
-
-fn test_stack(n: comptime_int) Stack {
-    return Stack.initBuffer(@constCast(&[_]Value{.{ .nil = {} }} ** n));
+    stack.appendAssumeCapacity(value.box(s));
+    @call(.always_tail, instructions[program[n]], .{ allocator, stack, program[n + 1 ..], values });
 }
 
 test str {
@@ -58,31 +39,31 @@ test str {
     const program = .{opcode("str")} ++ expected ++ .{ 0, opcode("end") };
     var values = Values{};
 
-    try instructions[program[0]](testing.allocator, &stack, program[1..], &values);
+    instructions[program[0]](testing.allocator, &stack, program[1..], &values);
     try testing.expectEqual(1, stack.items.len);
-    try testing.expectEqualStrings(expected, stack.pop().string);
+    try testing.expectEqualStrings(expected, value.unbox(stack.pop()).string);
 }
 
-fn num(allocator: Allocator, stack: *Stack, program: []const u8, values: *Values) EvaluationError!void {
-    const n = @sizeOf(NumberType);
-    stack.appendAssumeCapacity(.{ .number = @bitCast(program[0..n].*) });
-    try @call(.always_tail, instructions[program[n]], .{ allocator, stack, program[n + 1 ..], values });
+fn num(allocator: Allocator, stack: *Stack, program: []const u8, values: *Values) void {
+    const n = @sizeOf(f64);
+    stack.appendAssumeCapacity(@bitCast(program[0..n].*));
+    @call(.always_tail, instructions[program[n]], .{ allocator, stack, program[n + 1 ..], values });
 }
 
 test num {
     var stack = test_stack(2);
-    const program = .{opcode("num")} ++ mem.toBytes(@as(NumberType, 0.0)) ++ .{opcode("num")} ++ mem.toBytes(math.nan(NumberType)) ++ .{opcode("end")};
+    const program = .{opcode("num")} ++ mem.toBytes(@as(f64, 0.0)) ++ .{opcode("num")} ++ mem.toBytes(math.nan(f64)) ++ .{opcode("end")};
     var values = Values{};
 
-    try instructions[program[0]](testing.allocator, &stack, program[1..], &values);
+    instructions[program[0]](testing.allocator, &stack, program[1..], &values);
     try testing.expectEqual(2, stack.items.len);
-    try testing.expect(math.isNan(stack.pop().number));
-    try testing.expectEqual(0.0, stack.pop().number);
+    try testing.expect(math.isNan(stack.pop()));
+    try testing.expectEqual(0.0, stack.pop());
 }
 
-fn pop(allocator: Allocator, stack: *Stack, program: []const u8, values: *Values) EvaluationError!void {
+fn pop(allocator: Allocator, stack: *Stack, program: []const u8, values: *Values) void {
     _ = stack.pop();
-    try @call(.always_tail, instructions[program[0]], .{ allocator, stack, program[1..], values });
+    @call(.always_tail, instructions[program[0]], .{ allocator, stack, program[1..], values });
 }
 
 test pop {
@@ -90,14 +71,14 @@ test pop {
     const program = [_]u8{ opcode("pop"), opcode("end") };
     var values = Values{};
 
-    stack.appendAssumeCapacity(.{ .bool = true });
-    try instructions[program[0]](testing.allocator, &stack, program[1..], &values);
+    stack.appendAssumeCapacity(value.box(true));
+    instructions[program[0]](testing.allocator, &stack, program[1..], &values);
     try testing.expectEqual(0, stack.items.len);
 }
 
-fn dup(allocator: Allocator, stack: *Stack, program: []const u8, values: *Values) EvaluationError!void {
+fn dup(allocator: Allocator, stack: *Stack, program: []const u8, values: *Values) void {
     stack.appendAssumeCapacity(stack.getLast());
-    try @call(.always_tail, instructions[program[0]], .{ allocator, stack, program[1..], values });
+    @call(.always_tail, instructions[program[0]], .{ allocator, stack, program[1..], values });
 }
 
 test dup {
@@ -105,16 +86,16 @@ test dup {
     const program = [_]u8{ opcode("dup"), opcode("end") };
     var values = Values{};
 
-    stack.appendAssumeCapacity(.{ .bool = true });
-    try instructions[program[0]](testing.allocator, &stack, program[1..], &values);
+    stack.appendAssumeCapacity(1.0);
+    instructions[program[0]](testing.allocator, &stack, program[1..], &values);
     try testing.expectEqual(2, stack.items.len);
-    try testing.expect(stack.pop().bool);
-    try testing.expect(stack.pop().bool);
+    try testing.expectEqual(1.0, stack.pop());
+    try testing.expectEqual(1.0, stack.pop());
 }
 
-fn not(allocator: Allocator, stack: *Stack, program: []const u8, values: *Values) EvaluationError!void {
-    stack.appendAssumeCapacity(.{ .bool = !stack.pop().truthy() });
-    try @call(.always_tail, instructions[program[0]], .{ allocator, stack, program[1..], values });
+fn not(allocator: Allocator, stack: *Stack, program: []const u8, values: *Values) void {
+    stack.appendAssumeCapacity(value.box(!value.truthy(stack.pop())));
+    @call(.always_tail, instructions[program[0]], .{ allocator, stack, program[1..], values });
 }
 
 test not {
@@ -122,76 +103,76 @@ test not {
     const program = [_]u8{ opcode("not"), opcode("end") };
     var values = Values{};
 
-    stack.appendAssumeCapacity(.{ .bool = false });
-    try instructions[program[0]](testing.allocator, &stack, program[1..], &values);
+    stack.appendAssumeCapacity(value.box(false));
+    instructions[program[0]](testing.allocator, &stack, program[1..], &values);
     try testing.expectEqual(1, stack.items.len);
-    try testing.expect(stack.pop().bool);
+    try testing.expect(value.truthy(stack.pop()));
 }
 
-fn get(allocator: Allocator, stack: *Stack, program: []const u8, values: *Values) EvaluationError!void {
+fn get(allocator: Allocator, stack: *Stack, program: []const u8, values: *Values) void {
     const n = @sizeOf(Index);
     const i: Index = @bitCast(program[0..n].*);
 
     var p = values.first;
     for (0..i.depth) |_| p = p.?.next;
     stack.appendAssumeCapacity(p.?.data[i.index]);
-    try @call(.always_tail, instructions[program[n]], .{ allocator, stack, program[n + 1 ..], values });
+    @call(.always_tail, instructions[program[n]], .{ allocator, stack, program[n + 1 ..], values });
 }
 
 test get {
     var stack = test_stack(1);
     const program = .{opcode("get")} ++ mem.toBytes(Index{ .depth = 0, .index = 0 }) ++ .{opcode("end")};
     var values = Values{};
-    var locals = [_]Value{.{ .string = "Hello, world!" }};
+    var locals = [_]f64{value.box(@as([*:0]const u8, "Hello, world!"))};
     var scope = Values.Node{ .data = locals[0..] };
 
     values.prepend(&scope);
-    try instructions[program[0]](testing.allocator, &stack, program[1..], &values);
+    instructions[program[0]](testing.allocator, &stack, program[1..], &values);
     try testing.expectEqual(1, stack.items.len);
-    try testing.expectEqualStrings("Hello, world!", stack.pop().string);
+    try testing.expectEqualStrings("Hello, world!", value.unbox(stack.pop()).string);
 }
 
-fn set(allocator: Allocator, stack: *Stack, program: []const u8, values: *Values) EvaluationError!void {
+fn set(allocator: Allocator, stack: *Stack, program: []const u8, values: *Values) void {
     const n = @sizeOf(Index);
     const i: Index = @bitCast(program[0..n].*);
 
     var p = values.first;
     for (0..i.depth) |_| p = p.?.next;
     p.?.data[i.index] = stack.pop();
-    try @call(.always_tail, instructions[program[n]], .{ allocator, stack, program[n + 1 ..], values });
+    @call(.always_tail, instructions[program[n]], .{ allocator, stack, program[n + 1 ..], values });
 }
 
 test set {
     var stack = test_stack(1);
     const program = .{opcode("set")} ++ mem.toBytes(Index{ .depth = 0, .index = 0 }) ++ .{opcode("end")};
     var values = Values{};
-    var locals = [_]Value{.{ .nil = {} }};
+    var locals = [_]f64{value.box({})};
     var scope = Values.Node{ .data = locals[0..] };
 
     values.prepend(&scope);
-    stack.appendAssumeCapacity(.{ .string = "Hello, world!" });
-    try instructions[program[0]](testing.allocator, &stack, program[1..], &values);
+    stack.appendAssumeCapacity(value.box(@as([*:0]const u8, "Hello, world!")));
+    instructions[program[0]](testing.allocator, &stack, program[1..], &values);
     try testing.expectEqual(0, stack.items.len);
-    try testing.expectEqualStrings("Hello, world!", locals[0].string);
+    try testing.expectEqualStrings("Hello, world!", value.unbox(locals[0]).string);
 }
 
-fn jmp(allocator: Allocator, stack: *Stack, program: []const u8, values: *Values) EvaluationError!void {
+fn jmp(allocator: Allocator, stack: *Stack, program: []const u8, values: *Values) void {
     const m = @sizeOf(usize);
     const n = mem.readInt(usize, program[0..m], native_endian) + m;
-    try @call(.always_tail, instructions[program[n]], .{ allocator, stack, program[n + 1 ..], values });
+    @call(.always_tail, instructions[program[n]], .{ allocator, stack, program[n + 1 ..], values });
 }
 
 test jmp {
     var stack = test_stack(0);
     const program = .{opcode("jmp")} ++ mem.toBytes(@as(usize, 0)) ++ .{opcode("end")};
     var values = Values{};
-    try instructions[program[0]](testing.allocator, &stack, program[1..], &values);
+    instructions[program[0]](testing.allocator, &stack, program[1..], &values);
 }
 
-fn jif(allocator: Allocator, stack: *Stack, program: []const u8, values: *Values) EvaluationError!void {
+fn jif(allocator: Allocator, stack: *Stack, program: []const u8, values: *Values) void {
     const m = @sizeOf(usize);
-    const n = if (stack.pop().truthy()) m else mem.readInt(usize, program[0..m], native_endian) + m;
-    try @call(.always_tail, instructions[program[n]], .{ allocator, stack, program[n + 1 ..], values });
+    const n = if (value.truthy(stack.pop())) m else mem.readInt(usize, program[0..m], native_endian) + m;
+    @call(.always_tail, instructions[program[n]], .{ allocator, stack, program[n + 1 ..], values });
 }
 
 test jif {
@@ -199,37 +180,22 @@ test jif {
     const program = .{opcode("jif")} ++ mem.toBytes(@as(usize, 0)) ++ .{opcode("end")};
     var values = Values{};
 
-    stack.appendAssumeCapacity(.{ .bool = false });
-    try instructions[program[0]](testing.allocator, &stack, program[1..], &values);
+    stack.appendAssumeCapacity(value.box(false));
+    instructions[program[0]](testing.allocator, &stack, program[1..], &values);
     try testing.expectEqual(0, stack.items.len);
 }
 
-fn binary(comptime op: fn (allocator: Allocator, a: Value, b: Value) EvaluationError!Value) Instruction {
+fn binary(comptime op: fn (a: f64, b: f64) f64) Instruction {
     return struct {
-        fn wrap(allocator: Allocator, stack: *Stack, program: []const u8, values: *Values) EvaluationError!void {
-            stack.appendAssumeCapacity(try op(allocator, stack.pop(), stack.pop()));
-            try @call(.always_tail, instructions[program[0]], .{ allocator, stack, program[1..], values });
+        fn wrap(allocator: Allocator, stack: *Stack, program: []const u8, values: *Values) void {
+            stack.appendAssumeCapacity(op(stack.pop(), stack.pop()));
+            @call(.always_tail, instructions[program[0]], .{ allocator, stack, program[1..], values });
         }
     }.wrap;
 }
 
-fn add(allocator: Allocator, a: Value, b: Value) EvaluationError!Value {
-    return switch (a) {
-        .number => |lhs| switch (b) {
-            .number => |rhs| .{ .number = lhs + rhs },
-            else => error.OperandsMustBeNumbers,
-        },
-        .string => |lhs| switch (b) {
-            .string => |rhs| blk: {
-                const s = try allocator.alloc(u8, lhs.len + rhs.len);
-                @memcpy(s[0..lhs.len], lhs);
-                @memcpy(s[lhs.len..], rhs);
-                break :blk .{ .string = s };
-            },
-            else => error.OperandsMustBeNumbers,
-        },
-        else => unreachable,
-    };
+fn add(a: f64, b: f64) f64 {
+    return a + b;
 }
 
 test add {
@@ -237,129 +203,105 @@ test add {
     const program = [_]u8{ opcode("add"), opcode("end") };
     var values = Values{};
 
-    for (0..2) |_| stack.appendAssumeCapacity(.{ .number = 1.0 });
-    try instructions[program[0]](testing.allocator, &stack, program[1..], &values);
+    for (0..2) |_| stack.appendAssumeCapacity(1.0);
+    instructions[program[0]](testing.allocator, &stack, program[1..], &values);
     try testing.expectEqual(1, stack.items.len);
-    try testing.expectEqual(2.0, stack.pop().number);
+    try testing.expectEqual(2.0, stack.pop());
 }
 
-fn sub(allocator: Allocator, a: Value, b: Value) EvaluationError!Value {
-    _ = allocator;
-    return switch (a) {
-        .number => |lhs| switch (b) {
-            .number => |rhs| .{ .number = lhs - rhs },
-            else => error.OperandsMustBeNumbers,
-        },
-        else => error.OperandsMustBeNumbers,
-    };
+fn sub(a: f64, b: f64) f64 {
+    return a + b;
 }
 
-fn mul(allocator: Allocator, a: Value, b: Value) EvaluationError!Value {
-    _ = allocator;
-    return switch (a) {
-        .number => |lhs| switch (b) {
-            .number => |rhs| .{ .number = lhs * rhs },
-            else => error.OperandsMustBeNumbers,
-        },
-        else => error.OperandsMustBeNumbers,
-    };
+fn mul(a: f64, b: f64) f64 {
+    return a - b;
 }
 
-fn div(allocator: Allocator, a: Value, b: Value) EvaluationError!Value {
-    _ = allocator;
-    return switch (a) {
-        .number => |lhs| switch (b) {
-            .number => |rhs| .{ .number = lhs / rhs },
-            else => error.OperandsMustBeNumbers,
-        },
-        else => error.OperandsMustBeNumbers,
-    };
+fn div(a: f64, b: f64) f64 {
+    return a / b;
 }
 
 fn compare(comptime op: math.CompareOperator) Instruction {
     return struct {
-        fn wrap(allocator: Allocator, stack: *Stack, program: []const u8, values: *Values) EvaluationError!void {
+        fn wrap(allocator: Allocator, stack: *Stack, program: []const u8, values: *Values) void {
             const b = stack.pop();
             const a = stack.pop();
-            stack.appendAssumeCapacity(.{ .bool = try switch (a) {
-                .number => |lhs| switch (b) {
-                    .number => |rhs| math.compare(lhs, op, rhs),
-                    else => error.OperandsMustBeNumbers,
+            stack.appendAssumeCapacity(value.box(switch (value.tag(a)) {
+                value.String => switch (value.tag(b)) {
+                    value.String => mem.order(u8, value.unbox(a).string, value.unbox(b).string).compare(op),
+                    else => false,
                 },
-                .string => |lhs| switch (b) {
-                    .string => |rhs| mem.order(u8, lhs, rhs).compare(op),
-                    else => error.OperandsMustBeStrings,
-                },
-                else => error.OperandsMustBeNumbers,
-            } });
-            try @call(.always_tail, instructions[program[0]], .{ allocator, stack, program[1..], values });
+                else => math.compare(a, op, b),
+            }));
+            @call(.always_tail, instructions[program[0]], .{ allocator, stack, program[1..], values });
         }
     }.wrap;
 }
 
-fn compareTester(a: Value, op: u8, b: Value) !bool {
+fn compareTester(a: f64, op: u8, b: f64) !bool {
     var stack = test_stack(2);
     const program = [_]u8{ op, opcode("end") };
     var values = Values{};
 
     stack.appendAssumeCapacity(a);
     stack.appendAssumeCapacity(b);
-    try instructions[program[0]](testing.allocator, &stack, program[1..], &values);
+    instructions[program[0]](testing.allocator, &stack, program[1..], &values);
     try testing.expectEqual(1, stack.items.len);
-    return stack.pop().bool;
+    return value.truthy(stack.pop());
 }
 
 test compare {
-    try testing.expect(try compareTester(.{ .number = 2.0 }, opcode("lt"), .{ .number = 3.0 }));
-    try testing.expect(try compareTester(.{ .number = 2.0 }, opcode("lte"), .{ .number = 3.0 }));
-    try testing.expect(!try compareTester(.{ .number = 2.0 }, opcode("gt"), .{ .number = 3.0 }));
-    try testing.expect(!try compareTester(.{ .number = 2.0 }, opcode("gte"), .{ .number = 3.0 }));
+    const foo = value.box(@as([*:0]const u8, "foo"));
+    const bar = value.box(@as([*:0]const u8, "bar"));
 
-    try testing.expect(!try compareTester(.{ .string = "foo" }, opcode("lt"), .{ .string = "bar" }));
-    try testing.expect(!try compareTester(.{ .string = "foo" }, opcode("lte"), .{ .string = "bar" }));
-    try testing.expect(try compareTester(.{ .string = "foo" }, opcode("gt"), .{ .string = "bar" }));
-    try testing.expect(try compareTester(.{ .string = "foo" }, opcode("gte"), .{ .string = "bar" }));
+    try testing.expect(try compareTester(2.0, opcode("lt"), 3.0));
+    try testing.expect(try compareTester(2.0, opcode("lte"), 3.0));
+    try testing.expect(!try compareTester(2.0, opcode("gt"), 3.0));
+    try testing.expect(!try compareTester(2.0, opcode("gte"), 3.0));
+
+    try testing.expect(!try compareTester(foo, opcode("lt"), bar));
+    try testing.expect(!try compareTester(foo, opcode("lte"), bar));
+    try testing.expect(try compareTester(foo, opcode("gt"), bar));
+    try testing.expect(try compareTester(foo, opcode("gte"), bar));
 }
 
 fn equal(ok: bool) Instruction {
     return struct {
-        fn wrap(allocator: Allocator, stack: *Stack, program: []const u8, values: *Values) EvaluationError!void {
+        fn wrap(allocator: Allocator, stack: *Stack, program: []const u8, values: *Values) void {
             const b = stack.pop();
             const a = stack.pop();
-            stack.appendAssumeCapacity(.{ .bool = switch (a) {
-                .bool => |lhs| switch (b) {
-                    .bool => |rhs| (lhs == rhs) == ok,
+            stack.appendAssumeCapacity(value.box(switch (value.tag(a)) {
+                value.String => switch (value.tag(b)) {
+                    value.String => mem.eql(u8, value.unbox(a).string, value.unbox(b).string) == ok,
                     else => !ok,
                 },
-                .number => |lhs| switch (b) {
-                    .number => |rhs| (lhs == rhs) == ok,
-                    else => !ok,
-                },
-                .string => |lhs| switch (b) {
-                    .string => |rhs| mem.eql(u8, lhs, rhs) == ok,
-                    else => !ok,
-                },
-                else => !ok,
-            } });
-            try @call(.always_tail, instructions[program[0]], .{ allocator, stack, program[1..], values });
+                else => (a == b) == ok,
+            }));
+            @call(.always_tail, instructions[program[0]], .{ allocator, stack, program[1..], values });
         }
     }.wrap;
 }
 
 test equal {
-    try testing.expect(!try compareTester(.{ .bool = true }, opcode("eql"), .{ .bool = false }));
-    try testing.expect(try compareTester(.{ .bool = true }, opcode("neq"), .{ .bool = false }));
-    try testing.expect(!try compareTester(.{ .number = 2.0 }, opcode("eql"), .{ .number = 3.0 }));
-    try testing.expect(try compareTester(.{ .number = 2.0 }, opcode("neq"), .{ .number = 3.0 }));
-    try testing.expect(!try compareTester(.{ .string = "foo" }, opcode("eql"), .{ .string = "bar" }));
-    try testing.expect(try compareTester(.{ .string = "foo" }, opcode("neq"), .{ .string = "bar" }));
+    const nil = value.box({});
+    const true_ = value.box(true);
+    const false_ = value.box(false);
+    const foo = value.box(@as([*:0]const u8, "foo"));
+    const bar = value.box(@as([*:0]const u8, "bar"));
 
-    try testing.expect(!try compareTester(.{ .bool = true }, opcode("eql"), .{ .nil = {} }));
-    try testing.expect(!try compareTester(.{ .bool = true }, opcode("eql"), .{ .number = 3.0 }));
-    try testing.expect(!try compareTester(.{ .bool = true }, opcode("eql"), .{ .string = "bar" }));
-    try testing.expect(try compareTester(.{ .bool = true }, opcode("neq"), .{ .nil = {} }));
-    try testing.expect(try compareTester(.{ .bool = true }, opcode("neq"), .{ .number = 3.0 }));
-    try testing.expect(try compareTester(.{ .bool = true }, opcode("neq"), .{ .string = "bar" }));
+    try testing.expect(!try compareTester(true_, opcode("eql"), false_));
+    try testing.expect(try compareTester(true_, opcode("neq"), false_));
+    try testing.expect(!try compareTester(2.0, opcode("eql"), 3.0));
+    try testing.expect(try compareTester(2.0, opcode("neq"), 3.0));
+    try testing.expect(!try compareTester(foo, opcode("eql"), bar));
+    try testing.expect(try compareTester(foo, opcode("neq"), bar));
+
+    try testing.expect(!try compareTester(true_, opcode("eql"), nil));
+    try testing.expect(!try compareTester(true_, opcode("eql"), 3.0));
+    try testing.expect(!try compareTester(true_, opcode("eql"), bar));
+    try testing.expect(try compareTester(true_, opcode("neq"), nil));
+    try testing.expect(try compareTester(true_, opcode("neq"), 3.0));
+    try testing.expect(try compareTester(true_, opcode("neq"), bar));
 }
 
 const names = std.StaticStringMap(InstructionPointer).initComptime(.{
@@ -392,5 +334,5 @@ pub fn opcode(comptime name: [:0]const u8) u8 {
 }
 
 pub fn run(allocator: Allocator, stack: *Stack, program: []const u8, values: *Values) !void {
-    try instructions[program[0]](allocator, stack, program[1..], values);
+    instructions[program[0]](allocator, stack, program[1..], values);
 }

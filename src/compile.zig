@@ -8,7 +8,6 @@ const Token = tokenize.Token;
 const parse = @import("parse.zig");
 const Node = parse.Node;
 const exec = @import("execute.zig");
-const Value = exec.Value;
 const Values = exec.Values;
 const Stack = exec.Stack;
 const opcode = exec.opcode;
@@ -115,7 +114,7 @@ test compile {
     try testing.expectEqualStrings(expected[0..], actual.items);
 }
 
-pub fn execute(allocator: Allocator, source: []const u8) !Value {
+pub fn execute(allocator: Allocator, source: []const u8) !f64 {
     const tokens = try tokenize.tokens(allocator, source);
     defer allocator.free(tokens);
 
@@ -142,8 +141,5 @@ pub fn execute(allocator: Allocator, source: []const u8) !Value {
 
 test execute {
     const allocator = testing.allocator;
-    try testing.expectEqual(
-        Value{ .number = 2.0 },
-        try execute(allocator, "1 + 1"),
-    );
+    try testing.expectEqual(2.0, try execute(allocator, "1 + 1"));
 }
