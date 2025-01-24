@@ -8,14 +8,17 @@ const Token = tokenize.Token;
 const parse = @import("parse.zig");
 const Node = parse.Node;
 const exec = @import("execute.zig");
-const Values = exec.Values;
+const Index = exec.Index;
 const Stack = exec.Stack;
+const Values = exec.Values;
 const opcode = exec.opcode;
 const run = exec.run;
 const value = @import("value.zig");
 comptime {
     _ = @import("emit.zig");
 }
+
+const Indices = std.SinglyLinkedList(std.StringHashMap(u24));
 
 const zero = mem.zeroes([@sizeOf(value.Box)]u8);
 // See https://github.com/ziglang/zig/pull/20074
@@ -34,14 +37,27 @@ const greedy = init: {
     break :init temp;
 };
 
-pub fn compile(program: *std.ArrayList(u8), tokens: []const Token, nodes: []const Node, node: usize) !void {
+fn find(indices: *Indices, name: []const u8) ?Index {
+    var depth: u8 = 0;
+    var it = indices.first;
+    while (it) |n| : ({
+        it = n.next;
+        depth += 1;
+    }) {
+        if (n.data.get(name)) |index|
+            return .{ .depth = depth, .index = index };
+    }
+    return null;
+}
+
+pub fn compile(program: *std.ArrayList(u8), indices: *Indices, tokens: []const Token, nodes: []const Node, node: usize) !void {
     const token = tokens[nodes[node].head.token];
     const count = nodes[node].head.count;
     switch (token.tag) {
         .EOF => {
             const index = node + 1;
             for (nodes[index .. index + count]) |arg|
-                try compile(program, tokens, nodes, arg.node);
+                try compile(program, indices, tokens, nodes, arg.node);
             try program.append(opcode("end"));
         },
         .NUMBER => {
@@ -54,36 +70,73 @@ pub fn compile(program: *std.ArrayList(u8), tokens: []const Token, nodes: []cons
             if (count == 1) { // -x ⇒ 0 - x
                 try program.append(opcode("num"));
                 try program.appendSlice(zero[0..]);
-                try compile(program, tokens, nodes, nodes[node + 1].node);
+                try compile(program, indices, tokens, nodes, nodes[node + 1].node);
             } else {
                 assert(count == 2);
-                try compile(program, tokens, nodes, nodes[node + 1].node);
-                try compile(program, tokens, nodes, nodes[node + 2].node);
+                try compile(program, indices, tokens, nodes, nodes[node + 1].node);
+                try compile(program, indices, tokens, nodes, nodes[node + 2].node);
             }
             try program.append(greedy.get(token.tag).?);
         },
         .AND => { // if (a) a else b
             assert(count == 2);
-            try compile(program, tokens, nodes, nodes[node + 1].node);
+            try compile(program, indices, tokens, nodes, nodes[node + 1].node);
             try program.append(opcode("dup"));
             try program.append(opcode("jif"));
             try program.appendSlice(&zero);
             const offset = program.items.len;
             try program.append(opcode("pop"));
-            try compile(program, tokens, nodes, nodes[node + 1].node);
+            try compile(program, indices, tokens, nodes, nodes[node + 1].node);
             program.replaceRangeAssumeCapacity(offset, offset + zero.len, &mem.toBytes(program.items.len - offset));
         },
         .OR => { // if (!a) a else b
             assert(count == 2);
-            try compile(program, tokens, nodes, nodes[node + 1].node);
+            try compile(program, indices, tokens, nodes, nodes[node + 1].node);
             try program.append(opcode("dup"));
             try program.append(opcode("not"));
             try program.append(opcode("jif"));
             try program.appendSlice(&zero);
             const offset = program.items.len;
             try program.append(opcode("pop"));
-            try compile(program, tokens, nodes, nodes[node + 1].node);
+            try compile(program, indices, tokens, nodes, nodes[node + 1].node);
             program.replaceRangeAssumeCapacity(offset, offset + zero.len, &mem.toBytes(program.items.len - offset));
+        },
+        .VAR => {
+            if (indices.popFirst()) |first| {
+                var map = first.data;
+                const name = tokens[nodes[node + 1].node].src;
+                const index: u24 = @truncate(map.count());
+                const gop = try map.getOrPut(name);
+                if (!gop.found_existing) gop.value_ptr.* = index;
+                if (count > 1) {
+                    try compile(program, indices, tokens, nodes, nodes[node + 2].node);
+                    try program.append(opcode("set"));
+                    try program.appendSlice(&mem.toBytes(Index{ .depth = 0, .index = index }));
+                }
+                first.data = map;
+                indices.prepend(first);
+            } else unreachable;
+        },
+        .EQUAL => {
+            const name = tokens[nodes[nodes[node + 1].node].head.token].src;
+            if (find(indices, name)) |index| {
+                try compile(program, indices, tokens, nodes, nodes[node + 2].node);
+                try program.append(opcode("set"));
+                try program.appendSlice(&mem.toBytes(index));
+            } else {
+                std.debug.print("\x1b[31merror\x1b[0muse of undeclared identifier '{s}'.", .{name});
+                return error.UndeclaredIdentifier;
+            }
+        },
+        .IDENTIFIER => {
+            const name = token.src;
+            if (find(indices, name)) |index| {
+                try program.append(opcode("get"));
+                try program.appendSlice(&mem.toBytes(index));
+            } else {
+                std.debug.print("use of undeclared identifier '{s}'.", .{name});
+                return error.UndeclaredIdentifier;
+            }
         },
         else => @panic("not supported"),
     }
@@ -110,12 +163,13 @@ test compile {
     defer actual.deinit();
     const one = mem.toBytes(value.box(1.0));
     const expected = .{opcode("num")} ++ one ++ .{opcode("num")} ++ one ++ .{ opcode("add"), opcode("end") };
+    var indices = Indices{};
 
-    try compile(&actual, tokens[0..], nodes[0..], 5);
+    try compile(&actual, &indices, tokens[0..], nodes[0..], 5);
     try testing.expectEqualStrings(expected[0..], actual.items);
 }
 
-pub fn execute(allocator: Allocator, source: []const u8) !value.Box {
+pub fn execute(allocator: Allocator, source: []const u8, values: *Values) !value.Box {
     const tokens = try tokenize.tokens(allocator, source);
     defer allocator.free(tokens);
 
@@ -129,12 +183,16 @@ pub fn execute(allocator: Allocator, source: []const u8) !value.Box {
 
     var program = std.ArrayList(u8).init(allocator);
     defer program.deinit();
-    try compile(&program, tokens, nodes.items, root);
+    var globals = Indices.Node{ .data = std.StringHashMap(u24).init(allocator) };
+    defer globals.data.deinit();
+    var indices = Indices{};
+    indices.prepend(&globals);
+    defer _ = indices.popFirst();
+    try compile(&program, &indices, tokens, nodes.items, root);
 
     var stack = try Stack.initCapacity(allocator, 16);
     defer stack.deinit(allocator);
-    var values = Values{};
-    run(allocator, &stack, program.items, &values);
+    run(allocator, &stack, program.items, values);
 
     std.debug.assert(stack.items.len == 1);
     return stack.pop();
@@ -142,5 +200,11 @@ pub fn execute(allocator: Allocator, source: []const u8) !value.Box {
 
 test execute {
     const allocator = testing.allocator;
-    try testing.expectEqual(2.0, try execute(allocator, "1 + 1"));
+    var values = Values{};
+    try testing.expectEqual(2.0, try execute(allocator, "1 + 1", &values));
+
+    var data: [1]value.Box = undefined;
+    var global = Values.Node{ .data = &data };
+    values.prepend(&global);
+    try testing.expectEqual(1.0, try execute(allocator, "var a = 1; a", &values));
 }

@@ -317,9 +317,10 @@ pub fn Evaluator(comptime WriterType: anytype) type {
                     var it = env.first;
                     while (it) |n| : (it = n.next) {
                         var scope = n.data;
-                        if (scope.get(key)) |_| {
+                        const gop = try scope.getOrPut(key);
+                        if (gop.found_existing) {
                             const val = try self.evaluate(nodes[node + 2].node, env);
-                            try scope.put(key, val);
+                            gop.value_ptr.* = val;
                             break :blk val;
                         } else continue;
                     }
