@@ -43,7 +43,7 @@ test str {
     const program = .{opcode("str")} ++ expected ++ .{ 0, opcode("end") };
     var values = Values{};
 
-    instructions[program[0]](testing.allocator, &stack, program[1..], &values);
+    run(testing.allocator, &stack, program, &values);
     try expectEqual(1, stack.items.len);
     try expectEqualStrings(expected, value.unbox(stack.pop()).string);
 }
@@ -56,10 +56,10 @@ fn num(allocator: Allocator, stack: *Stack, program: []const u8, values: *Values
 
 test num {
     var stack = test_stack(2);
-    const program = .{opcode("num")} ++ mem.toBytes(@as(Box, 0.0)) ++ .{opcode("num")} ++ mem.toBytes(math.nan(Box)) ++ .{opcode("end")};
+    const program = .{opcode("num")} ++ mem.toBytes(value.box(0.0)) ++ .{opcode("num")} ++ mem.toBytes(math.nan(Box)) ++ .{opcode("end")};
     var values = Values{};
 
-    instructions[program[0]](testing.allocator, &stack, program[1..], &values);
+    run(testing.allocator, &stack, &program, &values);
     try expectEqual(2, stack.items.len);
     try expect(math.isNan(stack.pop()));
     try expectEqual(0.0, stack.pop());
@@ -76,7 +76,7 @@ test pop {
     var values = Values{};
 
     stack.appendAssumeCapacity(value.box(true));
-    instructions[program[0]](testing.allocator, &stack, program[1..], &values);
+    run(testing.allocator, &stack, &program, &values);
     try expectEqual(0, stack.items.len);
 }
 
@@ -91,7 +91,7 @@ test dup {
     var values = Values{};
 
     stack.appendAssumeCapacity(1.0);
-    instructions[program[0]](testing.allocator, &stack, program[1..], &values);
+    run(testing.allocator, &stack, &program, &values);
     try expectEqual(2, stack.items.len);
     try expectEqual(1.0, stack.pop());
     try expectEqual(1.0, stack.pop());
@@ -108,7 +108,7 @@ test not {
     var values = Values{};
 
     stack.appendAssumeCapacity(value.box(false));
-    instructions[program[0]](testing.allocator, &stack, program[1..], &values);
+    run(testing.allocator, &stack, &program, &values);
     try expectEqual(1, stack.items.len);
     try expect(value.truthy(stack.pop()));
 }
@@ -131,7 +131,7 @@ test get {
     var scope = Values.Node{ .data = locals[0..] };
 
     values.prepend(&scope);
-    instructions[program[0]](testing.allocator, &stack, program[1..], &values);
+    run(testing.allocator, &stack, &program, &values);
     try expectEqual(1, stack.items.len);
     try expectEqualStrings("Hello, world!", value.unbox(stack.pop()).string);
 }
@@ -155,7 +155,7 @@ test set {
 
     values.prepend(&scope);
     stack.appendAssumeCapacity(value.box(@as([*:0]const u8, "Hello, world!")));
-    instructions[program[0]](testing.allocator, &stack, program[1..], &values);
+    run(testing.allocator, &stack, &program, &values);
     try expectEqual(0, stack.items.len);
     try expectEqualStrings("Hello, world!", value.unbox(locals[0]).string);
 }
@@ -170,7 +170,7 @@ test jmp {
     var stack = test_stack(0);
     const program = .{opcode("jmp")} ++ mem.toBytes(@as(usize, 0)) ++ .{opcode("end")};
     var values = Values{};
-    instructions[program[0]](testing.allocator, &stack, program[1..], &values);
+    run(testing.allocator, &stack, &program, &values);
 }
 
 fn jif(allocator: Allocator, stack: *Stack, program: []const u8, values: *Values) void {
@@ -185,7 +185,7 @@ test jif {
     var values = Values{};
 
     stack.appendAssumeCapacity(value.box(false));
-    instructions[program[0]](testing.allocator, &stack, program[1..], &values);
+    run(testing.allocator, &stack, &program, &values);
     try expectEqual(0, stack.items.len);
 }
 
@@ -208,17 +208,17 @@ test add {
     var values = Values{};
 
     for (0..2) |_| stack.appendAssumeCapacity(1.0);
-    instructions[program[0]](testing.allocator, &stack, program[1..], &values);
+    run(testing.allocator, &stack, &program, &values);
     try expectEqual(1, stack.items.len);
     try expectEqual(2.0, stack.pop());
 }
 
 fn sub(a: Box, b: Box) Box {
-    return a + b;
+    return a - b;
 }
 
 fn mul(a: Box, b: Box) Box {
-    return a - b;
+    return a * b;
 }
 
 fn div(a: Box, b: Box) Box {
@@ -249,7 +249,7 @@ fn compareTester(a: Box, comptime op: []const u8, b: Box) !bool {
 
     stack.appendAssumeCapacity(a);
     stack.appendAssumeCapacity(b);
-    instructions[program[0]](testing.allocator, &stack, program[1..], &values);
+    run(testing.allocator, &stack, &program, &values);
     try expectEqual(1, stack.items.len);
     return value.truthy(stack.pop());
 }
@@ -337,6 +337,6 @@ pub fn opcode(comptime name: []const u8) u8 {
     return @truncate(names.getIndex(name) orelse 0);
 }
 
-pub fn run(allocator: Allocator, stack: *Stack, program: []const u8, values: *Values) !void {
+pub fn run(allocator: Allocator, stack: *Stack, program: []const u8, values: *Values) void {
     instructions[program[0]](allocator, stack, program[1..], values);
 }

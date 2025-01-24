@@ -46,17 +46,11 @@ test tagFromInt {
     try expectEqual(.function, tagFromInt(0x7FFA000000000000));
 }
 
-pub const Nil = 0x7FF2000000000000;
-pub const Bool = 0x7FF4000000000000;
-pub const String = 0x7FF6000000000000;
-pub const Native = 0x7FF8000000000000;
-pub const Function = 0x7FFA000000000000;
-
 const Value = union {
     nil: void,
     bool: bool,
     string: []const u8,
-    native: *const fn ([]const f64) f64,
+    native: *const fn ([]const Box) Box,
     function: []const u8,
 };
 
@@ -83,6 +77,7 @@ test tag {
 
 pub fn box(x: anytype) Box {
     return switch (@TypeOf(x)) {
+        comptime_float => @as(Box, x),
         Box => x,
         void => @bitCast(intFromTag(.nil)),
         bool => @bitCast(intFromTag(.bool) | @intFromBool(x)),
@@ -116,7 +111,7 @@ test box {
     try expectEqual(.string, tag(str));
 }
 
-pub fn unbox(x: f64) Value {
+pub fn unbox(x: Box) Value {
     return switch (tag(x)) {
         .nil => .{ .nil = {} },
         .bool => .{ .bool = payload(x) != 0 },
@@ -130,7 +125,7 @@ test unbox {
     try expectEqualStrings(expected, unbox(box(@as([*:0]const u8, expected))).string);
 }
 
-pub fn truthy(x: f64) bool {
+pub fn truthy(x: Box) bool {
     return switch (tag(x)) {
         .nil => false,
         .bool => payload(x) != 0,

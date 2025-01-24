@@ -12,11 +12,12 @@ const Values = exec.Values;
 const Stack = exec.Stack;
 const opcode = exec.opcode;
 const run = exec.run;
+const value = @import("value.zig");
 comptime {
     _ = @import("emit.zig");
 }
 
-const zero = mem.zeroes([@sizeOf(f64)]u8);
+const zero = mem.zeroes([@sizeOf(value.Box)]u8);
 // See https://github.com/ziglang/zig/pull/20074
 const greedy = init: {
     var temp = std.EnumMap(Token.Tag, u8){};
@@ -44,8 +45,8 @@ pub fn compile(program: *std.ArrayList(u8), tokens: []const Token, nodes: []cons
             try program.append(opcode("end"));
         },
         .NUMBER => {
-            const num = try std.fmt.parseFloat(f64, token.src);
-            const buf: [@sizeOf(f64)]u8 = @bitCast(num);
+            const num = try std.fmt.parseFloat(value.Box, token.src);
+            const buf: [@sizeOf(value.Box)]u8 = @bitCast(num);
             try program.append(opcode("num"));
             try program.appendSlice(buf[0..]);
         },
@@ -107,14 +108,14 @@ test compile {
     };
     var actual = std.ArrayList(u8).init(testing.allocator);
     defer actual.deinit();
-    const one = mem.toBytes(@as(f64, 1.0));
+    const one = mem.toBytes(value.box(1.0));
     const expected = .{opcode("num")} ++ one ++ .{opcode("num")} ++ one ++ .{ opcode("add"), opcode("end") };
 
     try compile(&actual, tokens[0..], nodes[0..], 5);
     try testing.expectEqualStrings(expected[0..], actual.items);
 }
 
-pub fn execute(allocator: Allocator, source: []const u8) !f64 {
+pub fn execute(allocator: Allocator, source: []const u8) !value.Box {
     const tokens = try tokenize.tokens(allocator, source);
     defer allocator.free(tokens);
 
@@ -133,7 +134,7 @@ pub fn execute(allocator: Allocator, source: []const u8) !f64 {
     var stack = try Stack.initCapacity(allocator, 16);
     defer stack.deinit(allocator);
     var values = Values{};
-    try run(allocator, &stack, program.items, &values);
+    run(allocator, &stack, program.items, &values);
 
     std.debug.assert(stack.items.len == 1);
     return stack.pop();
