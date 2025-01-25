@@ -48,15 +48,15 @@ test str {
     try expectEqualStrings(expected, value.unbox(stack.pop()).string);
 }
 
-fn num(allocator: Allocator, stack: *Stack, program: []const u8, values: *Values) void {
+fn box(allocator: Allocator, stack: *Stack, program: []const u8, values: *Values) void {
     const n = @sizeOf(Box);
     stack.appendAssumeCapacity(@bitCast(program[0..n].*));
     @call(.always_tail, instructions[program[n]], .{ allocator, stack, program[n + 1 ..], values });
 }
 
-test num {
+test box {
     var stack = test_stack(2);
-    const program = .{opcode("num")} ++ mem.toBytes(value.box(0.0)) ++ .{opcode("num")} ++ mem.toBytes(math.nan(Box)) ++ .{opcode("end")};
+    const program = .{opcode("box")} ++ mem.toBytes(value.box(0.0)) ++ .{opcode("box")} ++ mem.toBytes(math.nan(Box)) ++ .{opcode("end")};
     var values = Values{};
 
     run(testing.allocator, &stack, &program, &values);
@@ -310,7 +310,7 @@ test equal {
 
 const names = std.StaticStringMap(InstructionPointer).initComptime(.{
     .{ "end", &end },
-    .{ "num", &num },
+    .{ "box", &box },
     .{ "str", &str },
     .{ "pop", &pop },
     .{ "dup", &dup },

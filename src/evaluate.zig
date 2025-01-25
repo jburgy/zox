@@ -474,9 +474,9 @@ test "evaluate" {
         .{ .source = 
         \\ "foo" < "bar"
         , .expected = .{ .bool = false } },
-        .{ .source = "{ var a = 1; a; }", .expected = .{ .number = 1 } },
-        .{ .source = "var a; a = 1", .expected = .{ .number = 1 } },
-        .{ .source = "var a = 0; a = 1", .expected = .{ .number = 1 } },
+        .{ .source = "var a = 1; a", .expected = .{ .number = 1 } },
+        .{ .source = "var a; a = 1; a", .expected = .{ .number = 1 } },
+        .{ .source = "var a = 0; a = 1; a", .expected = .{ .number = 1 } },
         .{ .source = 
         \\ {
         \\   fun sumTo(n) {

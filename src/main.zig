@@ -59,3 +59,7 @@ test "recursion" {
         else => false,
     });
 }
+
+test {
+    testing.refAllDecls(@This());
+}

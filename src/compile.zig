@@ -20,7 +20,11 @@ comptime {
 
 const Indices = std.SinglyLinkedList(std.StringHashMap(u24));
 
-const zero = mem.zeroes([@sizeOf(value.Box)]u8);
+const zero = mem.toBytes(value.box(0.0));
+test zero {
+    try testing.expectEqual(mem.zeroes([@sizeOf(value.Box)]u8), zero);
+}
+
 // See https://github.com/ziglang/zig/pull/20074
 const greedy = init: {
     var temp = std.EnumMap(Token.Tag, u8){};
@@ -62,13 +66,12 @@ pub fn compile(program: *std.ArrayList(u8), indices: *Indices, tokens: []const T
         },
         .NUMBER => {
             const num = try std.fmt.parseFloat(value.Box, token.src);
-            const buf: [@sizeOf(value.Box)]u8 = @bitCast(num);
-            try program.append(opcode("num"));
-            try program.appendSlice(buf[0..]);
+            try program.append(opcode("box"));
+            try program.appendSlice(&mem.toBytes(num));
         },
         .BANG_EQUAL, .EQUAL_EQUAL, .MINUS, .PLUS, .SLASH, .STAR, .LESS, .LESS_EQUAL, .GREATER, .GREATER_EQUAL => {
             if (count == 1) { // -x ⇒ 0 - x
-                try program.append(opcode("num"));
+                try program.append(opcode("box"));
                 try program.appendSlice(zero[0..]);
                 try compile(program, indices, tokens, nodes, nodes[node + 1].node);
             } else {
@@ -83,7 +86,7 @@ pub fn compile(program: *std.ArrayList(u8), indices: *Indices, tokens: []const T
             try compile(program, indices, tokens, nodes, nodes[node + 1].node);
             try program.append(opcode("dup"));
             try program.append(opcode("jif"));
-            try program.appendSlice(&zero);
+            try program.appendSlice(zero[0..]);
             const offset = program.items.len;
             try program.append(opcode("pop"));
             try compile(program, indices, tokens, nodes, nodes[node + 1].node);
@@ -95,7 +98,7 @@ pub fn compile(program: *std.ArrayList(u8), indices: *Indices, tokens: []const T
             try program.append(opcode("dup"));
             try program.append(opcode("not"));
             try program.append(opcode("jif"));
-            try program.appendSlice(&zero);
+            try program.appendSlice(zero[0..]);
             const offset = program.items.len;
             try program.append(opcode("pop"));
             try compile(program, indices, tokens, nodes, nodes[node + 1].node);
@@ -124,7 +127,7 @@ pub fn compile(program: *std.ArrayList(u8), indices: *Indices, tokens: []const T
                 try program.append(opcode("set"));
                 try program.appendSlice(&mem.toBytes(index));
             } else {
-                std.debug.print("\x1b[31merror\x1b[0muse of undeclared identifier '{s}'.", .{name});
+                std.debug.print("use of undeclared identifier '{s}'.", .{name});
                 return error.UndeclaredIdentifier;
             }
         },
@@ -162,7 +165,7 @@ test compile {
     var actual = std.ArrayList(u8).init(testing.allocator);
     defer actual.deinit();
     const one = mem.toBytes(value.box(1.0));
-    const expected = .{opcode("num")} ++ one ++ .{opcode("num")} ++ one ++ .{ opcode("add"), opcode("end") };
+    const expected = .{opcode("box")} ++ one ++ .{opcode("box")} ++ one ++ .{ opcode("add"), opcode("end") };
     var indices = Indices{};
 
     try compile(&actual, &indices, tokens[0..], nodes[0..], 5);
