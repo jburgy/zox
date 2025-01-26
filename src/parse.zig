@@ -118,7 +118,7 @@ fn statement(nodes: *Nodes, tokens: []const Token, token: u24) ParseError!State 
                             const body = try statement(nodes, tokens, cond.token + 1);
                             break :blk .{
                                 .token = body.token,
-                                .node = try appendNode(nodes, token, &.{body.node}),
+                                .node = try appendNode(nodes, token, &.{ cond.node, body.node }),
                             };
                         },
                         else => break :blk error.UnexpectedToken,

@@ -12,6 +12,7 @@ const evaluate = @import("evaluate.zig");
 const value = @import("value.zig");
 
 const Box = value.Box;
+const N: comptime_int = @sizeOf(Box);
 pub const Stack = std.ArrayListUnmanaged(Box);
 const Instruction = fn (Allocator, *Stack, []const u8, *Values) void;
 const InstructionPointer = *const fn (Allocator, *Stack, []const u8, *Values) void;
@@ -49,9 +50,8 @@ test str {
 }
 
 fn box(allocator: Allocator, stack: *Stack, program: []const u8, values: *Values) void {
-    const n = @sizeOf(Box);
-    stack.appendAssumeCapacity(@bitCast(program[0..n].*));
-    @call(.always_tail, instructions[program[n]], .{ allocator, stack, program[n + 1 ..], values });
+    stack.appendAssumeCapacity(@bitCast(program[0..N].*));
+    @call(.always_tail, instructions[program[N]], .{ allocator, stack, program[N + 1 ..], values });
 }
 
 test box {
@@ -161,32 +161,36 @@ test set {
 }
 
 fn jmp(allocator: Allocator, stack: *Stack, program: []const u8, values: *Values) void {
-    const m = @sizeOf(usize);
-    const n = mem.readInt(usize, program[0..m], native_endian) + m;
+    const n = mem.readInt(usize, program[0..N], native_endian);
     @call(.always_tail, instructions[program[n]], .{ allocator, stack, program[n + 1 ..], values });
 }
 
 test jmp {
     var stack = test_stack(0);
-    const program = .{opcode("jmp")} ++ mem.toBytes(@as(usize, 0)) ++ .{opcode("end")};
+    const program = .{opcode("jmp")} ++ mem.toBytes(@as(usize, N)) ++ .{opcode("end")};
     var values = Values{};
     run(testing.allocator, &stack, &program, &values);
 }
 
 fn jif(allocator: Allocator, stack: *Stack, program: []const u8, values: *Values) void {
-    const m = @sizeOf(usize);
-    const n = if (value.truthy(stack.pop())) m else mem.readInt(usize, program[0..m], native_endian) + m;
+    const n = if (value.truthy(stack.pop())) N else mem.readInt(usize, program[0..N], native_endian);
     @call(.always_tail, instructions[program[n]], .{ allocator, stack, program[n + 1 ..], values });
 }
 
 test jif {
     var stack = test_stack(1);
-    const program = .{opcode("jif")} ++ mem.toBytes(@as(usize, 0)) ++ .{opcode("end")};
+    const program = .{opcode("jif")} ++ mem.toBytes(@as(usize, N)) ++ .{opcode("end")};
     var values = Values{};
 
     stack.appendAssumeCapacity(value.box(false));
     run(testing.allocator, &stack, &program, &values);
     try expectEqual(0, stack.items.len);
+}
+
+fn ebb(allocator: Allocator, stack: *Stack, program: []const u8, values: *Values) void {
+    const n = mem.readInt(usize, program[0..N], native_endian);
+    const p = (program.ptr - n)[0 .. program.len + n];
+    @call(.always_tail, instructions[p[0]], .{ allocator, stack, p[1..], values });
 }
 
 fn binary(comptime op: fn (a: Box, b: Box) Box) Instruction {
@@ -319,6 +323,7 @@ const names = std.StaticStringMap(InstructionPointer).initComptime(.{
     .{ "set", &set },
     .{ "jmp", &jmp },
     .{ "jif", &jif },
+    .{ "ebb", &ebb },
     .{ "add", &binary(add) },
     .{ "sub", &binary(sub) },
     .{ "mul", &binary(mul) },

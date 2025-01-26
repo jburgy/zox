@@ -82,11 +82,11 @@ pub fn compile(program: *std.ArrayList(u8), indices: *Indices, tokens: []const T
             try compile(program, indices, tokens, nodes, nodes[node + 1].node);
             try program.append(opcode("dup"));
             try program.append(opcode("jif"));
-            try program.appendNTimes(0xAA, N); // https://ziglang.org/documentation/master/#undefined
             const offset = program.items.len;
+            try program.appendNTimes(0xAA, N); // https://ziglang.org/documentation/master/#undefined
             try program.append(opcode("pop"));
             try compile(program, indices, tokens, nodes, nodes[node + 2].node);
-            program.replaceRangeAssumeCapacity(offset - N, N, &mem.toBytes(program.items.len - offset));
+            program.replaceRangeAssumeCapacity(offset, N, &mem.toBytes(program.items.len - offset));
         },
         .OR => { // if (!a) a else b
             assert(count == 2);
@@ -94,11 +94,11 @@ pub fn compile(program: *std.ArrayList(u8), indices: *Indices, tokens: []const T
             try program.append(opcode("dup"));
             try program.append(opcode("not"));
             try program.append(opcode("jif"));
-            try program.appendNTimes(0xAA, N);
             const offset = program.items.len;
+            try program.appendNTimes(0xAA, N);
             try program.append(opcode("pop"));
             try compile(program, indices, tokens, nodes, nodes[node + 2].node);
-            program.replaceRangeAssumeCapacity(offset - N, N, &mem.toBytes(program.items.len - offset));
+            program.replaceRangeAssumeCapacity(offset, N, &mem.toBytes(program.items.len - offset));
         },
         .VAR => {
             if (indices.popFirst()) |first| {
@@ -141,19 +141,31 @@ pub fn compile(program: *std.ArrayList(u8), indices: *Indices, tokens: []const T
             assert(count == 2 or count == 3);
             try compile(program, indices, tokens, nodes, nodes[node + 1].node);
             try program.append(opcode("jif"));
-            try program.appendNTimes(0xAA, N);
             const offset = program.items.len;
+            try program.appendNTimes(0xAA, N);
             try compile(program, indices, tokens, nodes, nodes[node + 2].node);
             if (count == 3) {
                 try program.append(opcode("jmp"));
-                try program.appendNTimes(0xAA, N);
                 const other = program.items.len;
-                program.replaceRangeAssumeCapacity(offset - N, N, &mem.toBytes(program.items.len - offset));
+                try program.appendNTimes(0xAA, N);
+                program.replaceRangeAssumeCapacity(offset, N, &mem.toBytes(program.items.len - offset));
                 try compile(program, indices, tokens, nodes, nodes[node + 3].node);
-                program.replaceRangeAssumeCapacity(other - N, N, &mem.toBytes(program.items.len - other));
+                program.replaceRangeAssumeCapacity(other, N, &mem.toBytes(program.items.len - other));
             } else {
-                program.replaceRangeAssumeCapacity(offset - N, N, &mem.toBytes(program.items.len - offset));
+                program.replaceRangeAssumeCapacity(offset, N, &mem.toBytes(program.items.len - offset));
             }
+        },
+        .WHILE => {
+            assert(count == 2);
+            const start = program.items.len;
+            try compile(program, indices, tokens, nodes, nodes[node + 1].node);
+            try program.append(opcode("jif"));
+            const offset = program.items.len;
+            try program.appendNTimes(0xAA, N);
+            try compile(program, indices, tokens, nodes, nodes[node + 2].node);
+            try program.append(opcode("ebb"));
+            try program.appendSlice(&mem.toBytes(program.items.len - start));
+            program.replaceRangeAssumeCapacity(offset, N, &mem.toBytes(program.items.len - offset));
         },
         else => @panic("not supported"),
     }
@@ -226,4 +238,5 @@ test execute {
     try testing.expectEqual(1.0, try execute(allocator, "var a = 1; a", &values));
     try testing.expectEqual(0.0, try execute(allocator, "var a = 0; if (a) a = 2; a", &values));
     try testing.expectEqual(2.0, try execute(allocator, "var a = 1; if (a) a = 2; a", &values));
+    try testing.expectEqual(0.0, try execute(allocator, "var a = 1; while (a) a = a - 1; a", &values));
 }
