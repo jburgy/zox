@@ -19,11 +19,7 @@ comptime {
 }
 
 const Indices = std.SinglyLinkedList(std.StringHashMap(u24));
-
-const zero = mem.toBytes(value.box(0.0));
-test zero {
-    try testing.expectEqual(mem.zeroes([@sizeOf(value.Box)]u8), zero);
-}
+const N = @sizeOf(value.Box);
 
 // See https://github.com/ziglang/zig/pull/20074
 const greedy = init: {
@@ -72,7 +68,7 @@ pub fn compile(program: *std.ArrayList(u8), indices: *Indices, tokens: []const T
         .BANG_EQUAL, .EQUAL_EQUAL, .MINUS, .PLUS, .SLASH, .STAR, .LESS, .LESS_EQUAL, .GREATER, .GREATER_EQUAL => {
             if (count == 1) { // -x ⇒ 0 - x
                 try program.append(opcode("box"));
-                try program.appendSlice(zero[0..]);
+                try program.appendSlice(&mem.toBytes(value.box(0.0)));
                 try compile(program, indices, tokens, nodes, nodes[node + 1].node);
             } else {
                 assert(count == 2);
@@ -86,11 +82,11 @@ pub fn compile(program: *std.ArrayList(u8), indices: *Indices, tokens: []const T
             try compile(program, indices, tokens, nodes, nodes[node + 1].node);
             try program.append(opcode("dup"));
             try program.append(opcode("jif"));
-            try program.appendSlice(zero[0..]);
+            try program.appendNTimes(0xAA, N); // https://ziglang.org/documentation/master/#undefined
             const offset = program.items.len;
             try program.append(opcode("pop"));
-            try compile(program, indices, tokens, nodes, nodes[node + 1].node);
-            program.replaceRangeAssumeCapacity(offset, offset + zero.len, &mem.toBytes(program.items.len - offset));
+            try compile(program, indices, tokens, nodes, nodes[node + 2].node);
+            program.replaceRangeAssumeCapacity(offset - N, N, &mem.toBytes(program.items.len - offset));
         },
         .OR => { // if (!a) a else b
             assert(count == 2);
@@ -98,11 +94,11 @@ pub fn compile(program: *std.ArrayList(u8), indices: *Indices, tokens: []const T
             try program.append(opcode("dup"));
             try program.append(opcode("not"));
             try program.append(opcode("jif"));
-            try program.appendSlice(zero[0..]);
+            try program.appendNTimes(0xAA, N);
             const offset = program.items.len;
             try program.append(opcode("pop"));
-            try compile(program, indices, tokens, nodes, nodes[node + 1].node);
-            program.replaceRangeAssumeCapacity(offset, offset + zero.len, &mem.toBytes(program.items.len - offset));
+            try compile(program, indices, tokens, nodes, nodes[node + 2].node);
+            program.replaceRangeAssumeCapacity(offset - N, N, &mem.toBytes(program.items.len - offset));
         },
         .VAR => {
             if (indices.popFirst()) |first| {
@@ -139,6 +135,24 @@ pub fn compile(program: *std.ArrayList(u8), indices: *Indices, tokens: []const T
             } else {
                 std.debug.print("use of undeclared identifier '{s}'.", .{name});
                 return error.UndeclaredIdentifier;
+            }
+        },
+        .IF => {
+            assert(count == 2 or count == 3);
+            try compile(program, indices, tokens, nodes, nodes[node + 1].node);
+            try program.append(opcode("jif"));
+            try program.appendNTimes(0xAA, N);
+            const offset = program.items.len;
+            try compile(program, indices, tokens, nodes, nodes[node + 2].node);
+            if (count == 3) {
+                try program.append(opcode("jmp"));
+                try program.appendNTimes(0xAA, N);
+                const other = program.items.len;
+                program.replaceRangeAssumeCapacity(offset - N, N, &mem.toBytes(program.items.len - offset));
+                try compile(program, indices, tokens, nodes, nodes[node + 3].node);
+                program.replaceRangeAssumeCapacity(other - N, N, &mem.toBytes(program.items.len - other));
+            } else {
+                program.replaceRangeAssumeCapacity(offset - N, N, &mem.toBytes(program.items.len - offset));
             }
         },
         else => @panic("not supported"),
@@ -204,10 +218,12 @@ pub fn execute(allocator: Allocator, source: []const u8, values: *Values) !value
 test execute {
     const allocator = testing.allocator;
     var values = Values{};
-    try testing.expectEqual(2.0, try execute(allocator, "1 + 1", &values));
-
     var data: [1]value.Box = undefined;
-    var global = Values.Node{ .data = &data };
-    values.prepend(&global);
+    var globals = Values.Node{ .data = &data };
+    values.prepend(&globals);
+
+    try testing.expectEqual(2.0, try execute(allocator, "1 + 1", &values));
     try testing.expectEqual(1.0, try execute(allocator, "var a = 1; a", &values));
+    try testing.expectEqual(0.0, try execute(allocator, "var a = 0; if (a) a = 2; a", &values));
+    try testing.expectEqual(2.0, try execute(allocator, "var a = 1; if (a) a = 2; a", &values));
 }
