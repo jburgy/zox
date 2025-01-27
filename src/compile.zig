@@ -111,12 +111,8 @@ pub fn compile(program: *std.ArrayList(u8), indices: *Indices, tokens: []const T
             // https://discord.com/channels/605571803288698900/1333444838691180554
             const map = &indices.first.?.data;
             const name = tokens[nodes[node + 1].node].src;
-            var index: u24 = @truncate(map.count()); // default if !found_existing
-            const gop = try map.getOrPut(name);
-            if (gop.found_existing)
-                index = gop.value_ptr.*
-            else
-                gop.value_ptr.* = index;
+            const index: u24 = @truncate(map.count());
+            try map.putNoClobber(name, index);
             if (count > 1) {
                 effect += try compile(program, indices, tokens, nodes, nodes[node + 2].node);
                 try program.append(opcode("set"));
