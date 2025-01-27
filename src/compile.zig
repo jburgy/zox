@@ -108,21 +108,21 @@ pub fn compile(program: *std.ArrayList(u8), indices: *Indices, tokens: []const T
             program.replaceRangeAssumeCapacity(offset, N, &mem.toBytes(program.items.len - offset));
         },
         .VAR => {
-            if (indices.popFirst()) |first| {
-                var map = first.data;
-                const name = tokens[nodes[node + 1].node].src;
-                const index: u24 = @truncate(map.count());
-                const gop = try map.getOrPut(name);
-                if (!gop.found_existing) gop.value_ptr.* = index;
-                if (count > 1) {
-                    effect += try compile(program, indices, tokens, nodes, nodes[node + 2].node);
-                    try program.append(opcode("set"));
-                    try program.appendSlice(&mem.toBytes(Index{ .depth = 0, .index = index }));
-                    effect -= 1;
-                }
-                first.data = map;
-                indices.prepend(first);
-            } else unreachable;
+            // https://discord.com/channels/605571803288698900/1333444838691180554
+            const map = &indices.first.?.data;
+            const name = tokens[nodes[node + 1].node].src;
+            var index: u24 = @truncate(map.count()); // default if !found_existing
+            const gop = try map.getOrPut(name);
+            if (gop.found_existing)
+                index = gop.value_ptr.*
+            else
+                gop.value_ptr.* = index;
+            if (count > 1) {
+                effect += try compile(program, indices, tokens, nodes, nodes[node + 2].node);
+                try program.append(opcode("set"));
+                try program.appendSlice(&mem.toBytes(Index{ .depth = 0, .index = index }));
+                effect -= 1;
+            }
         },
         .EQUAL => {
             const name = tokens[nodes[nodes[node + 1].node].head.token].src;
