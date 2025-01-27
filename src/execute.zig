@@ -14,8 +14,8 @@ const value = @import("value.zig");
 const Box = value.Box;
 const N: comptime_int = @sizeOf(Box);
 pub const Stack = std.ArrayListUnmanaged(Box);
-const Instruction = fn (Allocator, *Stack, []const u8, *Values) void;
-const InstructionPointer = *const fn (Allocator, *Stack, []const u8, *Values) void;
+const Instruction = @TypeOf(end);
+const InstructionPointer = @TypeOf(&end);
 
 pub const Values = std.SinglyLinkedList([]Box);
 pub const Index = packed struct(u32) { depth: u8, index: u24 };
@@ -193,7 +193,9 @@ fn ebb(allocator: Allocator, stack: *Stack, program: []const u8, values: *Values
     @call(.always_tail, instructions[p[0]], .{ allocator, stack, p[1..], values });
 }
 
-fn binary(comptime op: fn (a: Box, b: Box) Box) Instruction {
+const Binary = @TypeOf(add);
+
+fn binary(comptime op: Binary) Instruction {
     return struct {
         fn wrap(allocator: Allocator, stack: *Stack, program: []const u8, values: *Values) void {
             stack.appendAssumeCapacity(op(stack.pop(), stack.pop()));
