@@ -159,8 +159,8 @@ pub fn compile(program: *std.ArrayList(u8), indices: *Indices, tokens: []const T
                 try program.append(opcode("jmp"));
                 const other = program.items.len;
                 try program.appendNTimes(0xAA, N);
-                program.replaceRangeAssumeCapacity(offset, N, &mem.toBytes(program.items.len - offset));
                 effect -= 1;
+                program.replaceRangeAssumeCapacity(offset, N, &mem.toBytes(program.items.len - offset));
                 effect += try compile(program, indices, tokens, nodes, nodes[node + 3].node);
                 program.replaceRangeAssumeCapacity(other, N, &mem.toBytes(program.items.len - other));
             } else {
@@ -190,9 +190,11 @@ pub fn compile(program: *std.ArrayList(u8), indices: *Indices, tokens: []const T
             try program.append(opcode("jif"));
             const offset = program.items.len;
             try program.appendNTimes(0xAA, N);
+            effect -= 1;
             effect += try compile(program, indices, tokens, nodes, nodes[node + 3].node);
             const n = try compile(program, indices, tokens, nodes, nodes[node + 4].node);
             try program.appendNTimes(opcode("pop"), @abs(n));
+            effect -= n;
             try program.append(opcode("ebb"));
             try program.appendSlice(&mem.toBytes(program.items.len - start));
             program.replaceRangeAssumeCapacity(offset, N, &mem.toBytes(program.items.len - offset));
@@ -248,13 +250,13 @@ pub fn execute(allocator: Allocator, source: []const u8, values: *Values) !value
     var indices = Indices{};
     indices.prepend(&globals);
     defer _ = indices.popFirst();
-    _ = try compile(&program, &indices, tokens, nodes.items, root);
+    const n = try compile(&program, &indices, tokens, nodes.items, root);
 
     var stack = try Stack.initCapacity(allocator, 16);
     defer stack.deinit(allocator);
     run(allocator, &stack, program.items, values);
 
-    std.debug.assert(stack.items.len == 1);
+    std.debug.assert(stack.items.len == n);
     return stack.pop();
 }
 
