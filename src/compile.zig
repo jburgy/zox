@@ -301,8 +301,8 @@ pub fn execute(allocator: Allocator, source: []const u8, values: *Values) !value
     const n = try compile(&program, &indices, tokens, nodes.items, root);
 
     var stack = try Stack.initCapacity(allocator, 16);
-    defer stack.deinit(allocator);
-    try run(allocator, &stack, program.items, values);
+    defer stack.deinit();
+    try run(program.items, &stack, values);
 
     std.debug.assert(stack.items.len == n);
     return stack.pop();
