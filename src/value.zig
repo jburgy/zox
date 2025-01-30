@@ -47,6 +47,7 @@ test tagFromInt {
 }
 
 const Value = union {
+    number: Box,
     nil: void,
     bool: bool,
     string: []const u8,
@@ -116,7 +117,7 @@ pub fn unbox(x: Box) Value {
         .nil => .{ .nil = {} },
         .bool => .{ .bool = payload(x) != 0 },
         .string => .{ .string = std.mem.sliceTo(@as([*:0]const u8, @ptrFromInt(payload(x))), 0) },
-        else => unreachable,
+        else => .{ .number = x },
     };
 }
 

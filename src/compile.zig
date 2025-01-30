@@ -195,6 +195,58 @@ pub fn compile(program: *std.ArrayList(u8), indices: *Indices, tokens: []const T
             try program.appendSlice(&mem.toBytes(program.items.len - start));
             program.replaceRangeAssumeCapacity(offset, N, &mem.toBytes(program.items.len - offset));
         },
+        .FUN => {
+            assert(count >= 2);
+            // install function address in scope
+            const map = &indices.first.?.data;
+            const name = tokens[nodes[node + 1].node].src;
+            const index: u24 = @truncate(map.count());
+            try map.putNoClobber(name, index);
+            try program.append(opcode("box"));
+            const start = program.items.len;
+            try program.appendNTimes(0xAA, N);
+            try program.append(opcode("set"));
+            try program.appendSlice(&mem.toBytes(Index{ .depth = 0, .index = index }));
+            // skip over function body
+            try program.append(opcode("jmp"));
+            const body = program.items.len;
+            try program.appendNTimes(0xAA, N);
+            // function prologue (prime new scope with function parameters)
+            var locals = std.StringHashMap(u24).init(program.allocator);
+            defer locals.deinit();
+            try locals.ensureUnusedCapacity(count - 2);
+            program.replaceRangeAssumeCapacity(start, N, &mem.toBytes(program.items.len));
+            try program.append(opcode("new"));
+            const len = program.items.len;
+            try program.append(0xAA); // make space for arg count
+            for (nodes[node + 2 .. node + count], 0..) |param, i| {
+                locals.putAssumeCapacityNoClobber(tokens[param.head.token].src, @truncate(i));
+                try program.append(opcode("set"));
+                try program.appendSlice(&mem.toBytes(Index{ .depth = 0, .index = @truncate(i) }));
+            }
+            var new = Indices.Node{ .data = locals };
+            indices.prepend(&new);
+            _ = try compile(program, indices, tokens, nodes, nodes[nodes[node + count].node + 1].node);
+            // TODO: unconditionally return nil;
+            try program.append(opcode("ret"));
+            try program.appendNTimes(0xAA, N);
+            const end = program.items.len;
+            program.items[len] = @truncate(indices.popFirst().?.data.count());
+            program.replaceRangeAssumeCapacity(body, N, &mem.toBytes(program.items.len - body));
+            program.replaceRangeAssumeCapacity(end - N, N, &mem.toBytes(program.items.len));
+        },
+        .RIGHT_PAREN => {
+            try program.append(opcode("box"));
+            const start = program.items.len;
+            try program.appendNTimes(0xAA, N);
+            for (0..count) |i|
+                effect += try compile(program, indices, tokens, nodes, nodes[node + count - i].node);
+            assert(effect == count);
+            try program.append(opcode("call"));
+            effect -= 1;
+            program.replaceRangeAssumeCapacity(start, N, &mem.toBytes(program.items.len));
+            try program.append(@truncate(count));
+        },
         else => @panic("not supported"),
     }
     return effect;
@@ -250,7 +302,7 @@ pub fn execute(allocator: Allocator, source: []const u8, values: *Values) !value
 
     var stack = try Stack.initCapacity(allocator, 16);
     defer stack.deinit(allocator);
-    run(allocator, &stack, program.items, values);
+    try run(allocator, &stack, program.items, values);
 
     std.debug.assert(stack.items.len == n);
     return stack.pop();
@@ -271,5 +323,9 @@ test execute {
     try testing.expectEqual(
         10.0,
         try execute(allocator, "var sum = 0; for (var i = 0; i < 5; i = i + 1) sum = sum + i; sum", &values),
+    );
+    try testing.expectEqual(
+        1.0,
+        try execute(allocator, "fun f(x) { x + 1 }; f(0)", &values),
     );
 }
