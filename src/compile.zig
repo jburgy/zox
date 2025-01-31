@@ -333,15 +333,15 @@ test execute {
     var globals = Values.Node{ .data = &data };
     values.prepend(&globals);
 
-    // try testing.expectEqual(2.0, try execute(allocator, "1 + 1", &values));
-    // try testing.expectEqual(1.0, try execute(allocator, "var a = 1; a", &values));
-    // try testing.expectEqual(0.0, try execute(allocator, "var a = 0; if (a) a = 2; a", &values));
-    // try testing.expectEqual(2.0, try execute(allocator, "var a = 1; if (a) a = 2; a", &values));
-    // try testing.expectEqual(0.0, try execute(allocator, "var a = 1; while (a) a = a - 1; a", &values));
-    // try testing.expectEqual(
-    //     10.0,
-    //     try execute(allocator, "var sum = 0; for (var i = 0; i < 5; i = i + 1) sum = sum + i; sum", &values),
-    // );
+    try testing.expectEqual(2.0, try execute(allocator, "1 + 1", &values));
+    try testing.expectEqual(1.0, try execute(allocator, "var a = 1; a", &values));
+    try testing.expectEqual(0.0, try execute(allocator, "var a = 0; if (a) a = 2; a", &values));
+    try testing.expectEqual(2.0, try execute(allocator, "var a = 1; if (a) a = 2; a", &values));
+    try testing.expectEqual(0.0, try execute(allocator, "var a = 1; while (a) a = a - 1; a", &values));
+    try testing.expectEqual(
+        10.0,
+        try execute(allocator, "var sum = 0; for (var i = 0; i < 5; i = i + 1) sum = sum + i; sum", &values),
+    );
     try testing.expectEqual(
         1.0,
         try execute(allocator, "fun f(x) { x + 1 }; f(0)", &values),
