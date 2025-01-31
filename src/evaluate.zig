@@ -463,7 +463,7 @@ fn helper(allocator: Allocator, source: []const u8) !Value {
     return evaluate(allocator, source, stdout.writer(allocator));
 }
 
-test "evaluate" {
+test evaluate {
     const allocator = std.testing.allocator;
     const cases = [_]struct { source: []const u8, expected: Value }{
         .{ .source = "true", .expected = .{ .bool = true } },

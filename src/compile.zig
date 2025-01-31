@@ -51,7 +51,7 @@ fn find(indices: *Indices, name: []const u8) ?Index {
     return null;
 }
 
-pub fn compile(
+fn compile(
     code: *std.ArrayList(u8),
     indices: *Indices,
     tokens: []const Token,
@@ -293,7 +293,8 @@ test compile {
     const expected = .{opcode("box")} ++ one ++ .{opcode("box")} ++ one ++ .{ opcode("add"), opcode("end") };
     var indices = Indices{};
 
-    _ = try compile(&actual, &indices, tokens[0..], nodes[0..], 5, null);
+    const n = try compile(&actual, &indices, tokens[0..], nodes[0..], 5, null);
+    try testing.expectEqual(1, n);
     try testing.expectEqualStrings(expected[0..], actual.items);
 }
 
@@ -346,4 +347,13 @@ test execute {
         1.0,
         try execute(allocator, "fun f(x) { x + 1 }; f(0)", &values),
     );
+}
+
+test {
+    _ = tokenize;
+    _ = parse;
+    _ = @import("emit.zig");
+    _ = @import("evaluate.zig");
+    _ = value;
+    _ = exec;
 }
