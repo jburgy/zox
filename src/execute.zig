@@ -9,7 +9,6 @@ const assert = std.debug.assert;
 const expect = testing.expect;
 const expectEqual = testing.expectEqual;
 const expectEqualStrings = testing.expectEqualStrings;
-const evaluate = @import("evaluate.zig");
 const value = @import("value.zig");
 
 const Box = value.Box;
@@ -169,6 +168,13 @@ fn new(program: []const u8, stack: *Stack, values: *Values) Allocator.Error!void
     try @call(.always_tail, instructions[program[1]], .{ program[2..], stack, values });
 }
 
+fn del(program: []const u8, stack: *Stack, values: *Values) Allocator.Error!void {
+    const scope = values.popFirst().?;
+    stack.allocator.free(scope.data);
+    stack.allocator.destroy(scope);
+    try @call(.always_tail, instructions[program[0]], .{ program[1..], stack, values });
+}
+
 fn jmp(program: []const u8, stack: *Stack, values: *Values) Allocator.Error!void {
     const n = mem.readInt(usize, program[0..N], native_endian);
     try @call(.always_tail, instructions[program[n]], .{ program[n + 1 ..], stack, values });
@@ -211,9 +217,6 @@ fn call(program: []const u8, stack: *Stack, values: *Values) Allocator.Error!voi
 }
 
 fn ret(program: []const u8, stack: *Stack, values: *Values) Allocator.Error!void {
-    const scope = values.popFirst().?;
-    stack.allocator.free(scope.data);
-    stack.allocator.destroy(scope);
     // assumes exactly 1 result on stack
     const index: usize = @bitCast(stack.orderedRemove(stack.items.len - 2));
     const entry = mem.readInt(usize, program[0..N], native_endian);
@@ -352,6 +355,7 @@ const names = std.StaticStringMap(InstructionPointer).initComptime(.{
     .{ "get", &get },
     .{ "set", &set },
     .{ "new", &new },
+    .{ "del", &del },
     .{ "jmp", &jmp },
     .{ "jif", &jif },
     .{ "ebb", &ebb },
