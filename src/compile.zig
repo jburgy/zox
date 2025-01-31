@@ -52,7 +52,7 @@ fn find(indices: *Indices, name: []const u8) ?Index {
 }
 
 pub fn compile(
-    program: *std.ArrayList(u8),
+    code: *std.ArrayList(u8),
     indices: *Indices,
     tokens: []const Token,
     nodes: []const Node,
@@ -66,54 +66,54 @@ pub fn compile(
         .EOF => {
             const index = node + 1;
             for (nodes[index .. index + count]) |child|
-                effect += try compile(program, indices, tokens, nodes, child.node, null);
-            try program.append(opcode("end"));
+                effect += try compile(code, indices, tokens, nodes, child.node, null);
+            try code.append(opcode("end"));
         },
         .NUMBER => {
             const num = try std.fmt.parseFloat(value.Box, token.src);
-            try program.append(opcode("box"));
-            try program.appendSlice(&mem.toBytes(num));
+            try code.append(opcode("box"));
+            try code.appendSlice(&mem.toBytes(num));
             effect += 1;
         },
         .BANG_EQUAL, .EQUAL_EQUAL, .MINUS, .PLUS, .SLASH, .STAR, .LESS, .LESS_EQUAL, .GREATER, .GREATER_EQUAL => {
             if (count == 1) { // -x ⇒ 0 - x
-                try program.append(opcode("box"));
-                try program.appendSlice(&mem.toBytes(value.box(0.0)));
+                try code.append(opcode("box"));
+                try code.appendSlice(&mem.toBytes(value.box(0.0)));
                 effect += 1;
-                effect += try compile(program, indices, tokens, nodes, nodes[node + 1].node, null);
+                effect += try compile(code, indices, tokens, nodes, nodes[node + 1].node, null);
             } else {
                 assert(count == 2);
-                effect += try compile(program, indices, tokens, nodes, nodes[node + 1].node, null);
-                effect += try compile(program, indices, tokens, nodes, nodes[node + 2].node, null);
+                effect += try compile(code, indices, tokens, nodes, nodes[node + 1].node, null);
+                effect += try compile(code, indices, tokens, nodes, nodes[node + 2].node, null);
             }
             assert(effect >= 2);
-            try program.append(greedy.get(token.tag).?);
+            try code.append(greedy.get(token.tag).?);
             effect -= 1;
         },
         .AND => { // if (a) a else b
             assert(count == 2);
-            effect += try compile(program, indices, tokens, nodes, nodes[node + 1].node, null);
-            try program.append(opcode("dup"));
-            try program.append(opcode("jif"));
-            const offset = program.items.len;
-            try program.appendNTimes(0xAA, N); // https://ziglang.org/documentation/master/#undefined
-            try program.append(opcode("pop"));
+            effect += try compile(code, indices, tokens, nodes, nodes[node + 1].node, null);
+            try code.append(opcode("dup"));
+            try code.append(opcode("jif"));
+            const offset = code.items.len;
+            try code.appendNTimes(0xAA, N); // https://ziglang.org/documentation/master/#undefined
+            try code.append(opcode("pop"));
             effect -= 1;
-            effect += try compile(program, indices, tokens, nodes, nodes[node + 2].node, null);
-            program.replaceRangeAssumeCapacity(offset, N, &mem.toBytes(program.items.len - offset));
+            effect += try compile(code, indices, tokens, nodes, nodes[node + 2].node, null);
+            code.replaceRangeAssumeCapacity(offset, N, &mem.toBytes(code.items.len - offset));
         },
         .OR => { // if (!a) a else b
             assert(count == 2);
-            effect += try compile(program, indices, tokens, nodes, nodes[node + 1].node, null);
-            try program.append(opcode("dup"));
-            try program.append(opcode("not"));
-            try program.append(opcode("jif"));
-            const offset = program.items.len;
-            try program.appendNTimes(0xAA, N);
-            try program.append(opcode("pop"));
+            effect += try compile(code, indices, tokens, nodes, nodes[node + 1].node, null);
+            try code.append(opcode("dup"));
+            try code.append(opcode("not"));
+            try code.append(opcode("jif"));
+            const offset = code.items.len;
+            try code.appendNTimes(0xAA, N);
+            try code.append(opcode("pop"));
             effect -= 1;
-            effect += try compile(program, indices, tokens, nodes, nodes[node + 2].node, null);
-            program.replaceRangeAssumeCapacity(offset, N, &mem.toBytes(program.items.len - offset));
+            effect += try compile(code, indices, tokens, nodes, nodes[node + 2].node, null);
+            code.replaceRangeAssumeCapacity(offset, N, &mem.toBytes(code.items.len - offset));
         },
         .VAR => {
             // https://discord.com/channels/605571803288698900/1333444838691180554
@@ -122,18 +122,18 @@ pub fn compile(
             const index: u24 = @truncate(map.count());
             try map.putNoClobber(name, index);
             if (count > 1) {
-                effect += try compile(program, indices, tokens, nodes, nodes[node + 2].node, null);
-                try program.append(opcode("set"));
-                try program.appendSlice(&mem.toBytes(Index{ .depth = 0, .index = index }));
+                effect += try compile(code, indices, tokens, nodes, nodes[node + 2].node, null);
+                try code.append(opcode("set"));
+                try code.appendSlice(&mem.toBytes(Index{ .depth = 0, .index = index }));
                 effect -= 1;
             }
         },
         .EQUAL => {
             const name = tokens[nodes[nodes[node + 1].node].head.token].src;
             if (find(indices, name)) |index| {
-                effect += try compile(program, indices, tokens, nodes, nodes[node + 2].node, null);
-                try program.append(opcode("set"));
-                try program.appendSlice(&mem.toBytes(index));
+                effect += try compile(code, indices, tokens, nodes, nodes[node + 2].node, null);
+                try code.append(opcode("set"));
+                try code.appendSlice(&mem.toBytes(index));
                 effect -= 1;
             } else {
                 std.debug.print("use of undeclared identifier '{s}'.", .{name});
@@ -143,8 +143,8 @@ pub fn compile(
         .IDENTIFIER => {
             const name = token.src;
             if (find(indices, name)) |index| {
-                try program.append(opcode("get"));
-                try program.appendSlice(&mem.toBytes(index));
+                try code.append(opcode("get"));
+                try code.appendSlice(&mem.toBytes(index));
                 effect += 1;
             } else {
                 std.debug.print("use of undeclared identifier '{s}'.", .{name});
@@ -153,79 +153,79 @@ pub fn compile(
         },
         .IF => {
             assert(count == 2 or count == 3);
-            effect += try compile(program, indices, tokens, nodes, nodes[node + 1].node, null);
-            try program.append(opcode("jif"));
-            const offset = program.items.len;
-            try program.appendNTimes(0xAA, N);
+            effect += try compile(code, indices, tokens, nodes, nodes[node + 1].node, null);
+            try code.append(opcode("jif"));
+            const offset = code.items.len;
+            try code.appendNTimes(0xAA, N);
             effect -= 1;
-            effect += try compile(program, indices, tokens, nodes, nodes[node + 2].node, null);
+            effect += try compile(code, indices, tokens, nodes, nodes[node + 2].node, null);
             if (count == 3) {
-                try program.append(opcode("jmp"));
-                const other = program.items.len;
-                try program.appendNTimes(0xAA, N);
+                try code.append(opcode("jmp"));
+                const other = code.items.len;
+                try code.appendNTimes(0xAA, N);
                 effect -= 1;
-                program.replaceRangeAssumeCapacity(offset, N, &mem.toBytes(program.items.len - offset));
-                effect += try compile(program, indices, tokens, nodes, nodes[node + 3].node, null);
-                program.replaceRangeAssumeCapacity(other, N, &mem.toBytes(program.items.len - other));
+                code.replaceRangeAssumeCapacity(offset, N, &mem.toBytes(code.items.len - offset));
+                effect += try compile(code, indices, tokens, nodes, nodes[node + 3].node, null);
+                code.replaceRangeAssumeCapacity(other, N, &mem.toBytes(code.items.len - other));
             } else {
-                program.replaceRangeAssumeCapacity(offset, N, &mem.toBytes(program.items.len - offset));
+                code.replaceRangeAssumeCapacity(offset, N, &mem.toBytes(code.items.len - offset));
             }
         },
         .WHILE => {
             assert(count == 2);
-            const start = program.items.len;
-            effect += try compile(program, indices, tokens, nodes, nodes[node + 1].node, null);
-            try program.append(opcode("jif"));
-            const offset = program.items.len;
-            try program.appendNTimes(0xAA, N);
+            const start = code.items.len;
+            effect += try compile(code, indices, tokens, nodes, nodes[node + 1].node, null);
+            try code.append(opcode("jif"));
+            const offset = code.items.len;
+            try code.appendNTimes(0xAA, N);
             effect -= 1;
-            effect += try compile(program, indices, tokens, nodes, nodes[node + 2].node, null);
-            try program.append(opcode("ebb"));
-            try program.appendSlice(&mem.toBytes(program.items.len - start));
-            program.replaceRangeAssumeCapacity(offset, N, &mem.toBytes(program.items.len - offset));
+            effect += try compile(code, indices, tokens, nodes, nodes[node + 2].node, null);
+            try code.append(opcode("ebb"));
+            try code.appendSlice(&mem.toBytes(code.items.len - start));
+            code.replaceRangeAssumeCapacity(offset, N, &mem.toBytes(code.items.len - offset));
         },
         .FOR => {
             assert(count == 4);
-            effect += try compile(program, indices, tokens, nodes, nodes[node + 1].node, null);
-            try program.appendNTimes(opcode("pop"), @abs(effect));
+            effect += try compile(code, indices, tokens, nodes, nodes[node + 1].node, null);
+            try code.appendNTimes(opcode("pop"), @abs(effect));
             effect -= effect;
-            const start = program.items.len;
-            effect += try compile(program, indices, tokens, nodes, nodes[node + 2].node, null);
-            try program.append(opcode("jif"));
-            const offset = program.items.len;
-            try program.appendNTimes(0xAA, N);
+            const start = code.items.len;
+            effect += try compile(code, indices, tokens, nodes, nodes[node + 2].node, null);
+            try code.append(opcode("jif"));
+            const offset = code.items.len;
+            try code.appendNTimes(0xAA, N);
             effect -= 1;
-            effect += try compile(program, indices, tokens, nodes, nodes[node + 3].node, null);
-            const n = try compile(program, indices, tokens, nodes, nodes[node + 4].node, null);
-            try program.appendNTimes(opcode("pop"), @abs(n));
+            effect += try compile(code, indices, tokens, nodes, nodes[node + 3].node, null);
+            const n = try compile(code, indices, tokens, nodes, nodes[node + 4].node, null);
+            try code.appendNTimes(opcode("pop"), @abs(n));
             effect -= n;
-            try program.append(opcode("ebb"));
-            try program.appendSlice(&mem.toBytes(program.items.len - start));
-            program.replaceRangeAssumeCapacity(offset, N, &mem.toBytes(program.items.len - offset));
+            try code.append(opcode("ebb"));
+            try code.appendSlice(&mem.toBytes(code.items.len - start));
+            code.replaceRangeAssumeCapacity(offset, N, &mem.toBytes(code.items.len - offset));
         },
         .RIGHT_BRACE => {
-            var locals = Map.init(program.allocator);
+            var locals = Map.init(code.allocator);
             defer locals.deinit();
-            try program.append(opcode("new"));
-            const len = program.items.len;
-            try program.append(0xAA); // make space for scope size
+            try code.append(opcode("new"));
+            const len = code.items.len;
+            try code.append(0xAA); // make space for scope size
             if (params) |parms| {
                 // function prologue (prime new scope with function parameters)
                 try locals.ensureUnusedCapacity(@truncate(parms.len));
                 for (parms, 0..) |param, i| {
                     locals.putAssumeCapacityNoClobber(tokens[param.head.token].src, @truncate(i));
-                    try program.append(opcode("set"));
-                    try program.appendSlice(&mem.toBytes(Index{ .depth = 0, .index = @truncate(i) }));
+                    try code.append(opcode("set"));
+                    try code.appendSlice(&mem.toBytes(Index{ .depth = 0, .index = @truncate(i) }));
                     effect -= 1;
                 }
             }
             var new = Indices.Node{ .data = locals };
             indices.prepend(&new);
-            defer program.items[len] = @truncate(indices.popFirst().?.data.count());
+            defer code.items[len] = @truncate(indices.popFirst().?.data.count());
             const index = node + 1;
             for (nodes[index .. index + count]) |child|
-                effect += try compile(program, indices, tokens, nodes, child.node, params);
-            try program.append(opcode("del"));
+                effect += try compile(code, indices, tokens, nodes, child.node, params);
+            try code.append(opcode("del"));
         },
         .FUN => {
             assert(count >= 2);
@@ -234,36 +234,36 @@ pub fn compile(
             const name = tokens[nodes[node + 1].node].src;
             const index: u24 = @truncate(map.count());
             try map.putNoClobber(name, index);
-            try program.append(opcode("box"));
-            const start = program.items.len;
-            try program.appendNTimes(0xAA, N);
-            try program.append(opcode("set"));
-            try program.appendSlice(&mem.toBytes(Index{ .depth = 0, .index = index }));
+            try code.append(opcode("box"));
+            const start = code.items.len;
+            try code.appendNTimes(0xAA, N);
+            try code.append(opcode("set"));
+            try code.appendSlice(&mem.toBytes(Index{ .depth = 0, .index = index }));
             // skip over function body
-            try program.append(opcode("jmp"));
-            const body = program.items.len;
-            try program.appendNTimes(0xAA, N);
-            program.replaceRangeAssumeCapacity(start, N, &mem.toBytes(program.items.len));
+            try code.append(opcode("jmp"));
+            const body = code.items.len;
+            try code.appendNTimes(0xAA, N);
+            code.replaceRangeAssumeCapacity(start, N, &mem.toBytes(code.items.len));
             const parms = nodes[node + 2 .. node + count];
-            const side_effect = try compile(program, indices, tokens, nodes, nodes[node + count].node, parms);
+            const side_effect = try compile(code, indices, tokens, nodes, nodes[node + count].node, parms);
             assert(side_effect + @as(isize, @intCast(parms.len)) == 1);
-            try program.append(opcode("ret"));
-            try program.appendNTimes(0xAA, N);
-            const end = program.items.len;
-            program.replaceRangeAssumeCapacity(body, N, &mem.toBytes(end - body));
-            program.replaceRangeAssumeCapacity(end - N, N, &mem.toBytes(end));
+            try code.append(opcode("ret"));
+            try code.appendNTimes(0xAA, N);
+            const end = code.items.len;
+            code.replaceRangeAssumeCapacity(body, N, &mem.toBytes(end - body));
+            code.replaceRangeAssumeCapacity(end - N, N, &mem.toBytes(end));
         },
         .RIGHT_PAREN => {
-            try program.append(opcode("box"));
-            const start = program.items.len;
-            try program.appendNTimes(0xAA, N);
+            try code.append(opcode("box"));
+            const start = code.items.len;
+            try code.appendNTimes(0xAA, N);
             for (0..count) |i|
-                effect += try compile(program, indices, tokens, nodes, nodes[node + count - i].node, null);
+                effect += try compile(code, indices, tokens, nodes, nodes[node + count - i].node, null);
             assert(effect == count);
-            try program.append(opcode("call"));
+            try code.append(opcode("call"));
             effect -= 1;
-            program.replaceRangeAssumeCapacity(start, N, &mem.toBytes(program.items.len));
-            try program.append(@truncate(count));
+            code.replaceRangeAssumeCapacity(start, N, &mem.toBytes(code.items.len));
+            try code.append(@truncate(count));
         },
         else => unreachable,
     }
@@ -309,18 +309,18 @@ pub fn execute(allocator: Allocator, source: []const u8, values: *Values) !value
     const root = state.node.node;
     std.debug.assert(root + 1 + nodes.items[root].head.count == nodes.items.len);
 
-    var program = std.ArrayList(u8).init(allocator);
-    defer program.deinit();
+    var code = std.ArrayList(u8).init(allocator);
+    defer code.deinit();
     var globals = Indices.Node{ .data = Map.init(allocator) };
     defer globals.data.deinit();
     var indices = Indices{};
     indices.prepend(&globals);
     defer _ = indices.popFirst();
-    const n = try compile(&program, &indices, tokens, nodes.items, root, null);
+    const n = try compile(&code, &indices, tokens, nodes.items, root, null);
 
     var stack = try Stack.initCapacity(allocator, 16);
     defer stack.deinit();
-    try run(program.items, &stack, values);
+    try run(code.items, &stack, values);
 
     std.debug.assert(stack.items.len == n);
     return stack.pop();

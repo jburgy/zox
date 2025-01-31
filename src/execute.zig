@@ -5,7 +5,6 @@ const math = std.math;
 const mem = std.mem;
 const Allocator = std.mem.Allocator;
 const native_endian = builtin.cpu.arch.endian();
-const assert = std.debug.assert;
 const expect = testing.expect;
 const expectEqual = testing.expectEqual;
 const expectEqualStrings = testing.expectEqualStrings;
@@ -25,130 +24,130 @@ fn test_stack(n: comptime_int) Stack {
     return stack.toManaged(testing.allocator);
 }
 
-fn end(program: []const u8, stack: *Stack, values: *Values) Allocator.Error!void {
+fn end(code: []const u8, stack: *Stack, values: *Values) Allocator.Error!void {
     _ = stack;
     _ = values;
-    std.debug.assert(program.len == 0);
+    if (code.len != 0) unreachable;
 }
 
-fn str(program: []const u8, stack: *Stack, values: *Values) Allocator.Error!void {
-    const s = mem.sliceTo(program, 0);
+fn str(code: []const u8, stack: *Stack, values: *Values) Allocator.Error!void {
+    const s = mem.sliceTo(code, 0);
     const n = s.len + 1; // skip past nil sentinel
     stack.appendAssumeCapacity(value.box(s));
-    try @call(.always_tail, instructions[program[n]], .{ program[n + 1 ..], stack, values });
+    try @call(.always_tail, instructions[code[n]], .{ code[n + 1 ..], stack, values });
 }
 
 test str {
     const expected = "Hello, World!";
-    const program = .{opcode("str")} ++ expected ++ .{ 0, opcode("end") };
+    const code = .{opcode("str")} ++ expected ++ .{ 0, opcode("end") };
     var stack = test_stack(1);
     var values = Values{};
 
-    try run(program, &stack, &values);
+    try run(code, &stack, &values);
     try expectEqual(1, stack.items.len);
     try expectEqualStrings(expected, value.unbox(stack.pop()).string);
 }
 
-fn box(program: []const u8, stack: *Stack, values: *Values) Allocator.Error!void {
-    stack.appendAssumeCapacity(@bitCast(program[0..N].*));
-    try @call(.always_tail, instructions[program[N]], .{ program[N + 1 ..], stack, values });
+fn box(code: []const u8, stack: *Stack, values: *Values) Allocator.Error!void {
+    stack.appendAssumeCapacity(@bitCast(code[0..N].*));
+    try @call(.always_tail, instructions[code[N]], .{ code[N + 1 ..], stack, values });
 }
 
 test box {
-    const program = .{opcode("box")} ++ mem.toBytes(value.box(0.0)) ++ .{opcode("box")} ++ mem.toBytes(math.nan(Box)) ++ .{opcode("end")};
+    const code = .{opcode("box")} ++ mem.toBytes(value.box(0.0)) ++ .{opcode("box")} ++ mem.toBytes(math.nan(Box)) ++ .{opcode("end")};
     var stack = test_stack(2);
     var values = Values{};
 
-    try run(&program, &stack, &values);
+    try run(&code, &stack, &values);
     try expectEqual(2, stack.items.len);
     try expect(math.isNan(stack.pop()));
     try expectEqual(0.0, stack.pop());
 }
 
-fn pop(program: []const u8, stack: *Stack, values: *Values) Allocator.Error!void {
+fn pop(code: []const u8, stack: *Stack, values: *Values) Allocator.Error!void {
     _ = stack.pop();
-    try @call(.always_tail, instructions[program[0]], .{ program[1..], stack, values });
+    try @call(.always_tail, instructions[code[0]], .{ code[1..], stack, values });
 }
 
 test pop {
-    const program = [_]u8{ opcode("pop"), opcode("end") };
+    const code = [_]u8{ opcode("pop"), opcode("end") };
     var stack = test_stack(1);
     var values = Values{};
 
     stack.appendAssumeCapacity(value.box(true));
-    try run(&program, &stack, &values);
+    try run(&code, &stack, &values);
     try expectEqual(0, stack.items.len);
 }
 
-fn dup(program: []const u8, stack: *Stack, values: *Values) Allocator.Error!void {
+fn dup(code: []const u8, stack: *Stack, values: *Values) Allocator.Error!void {
     stack.appendAssumeCapacity(stack.getLast());
-    try @call(.always_tail, instructions[program[0]], .{ program[1..], stack, values });
+    try @call(.always_tail, instructions[code[0]], .{ code[1..], stack, values });
 }
 
 test dup {
-    const program = [_]u8{ opcode("dup"), opcode("end") };
+    const code = [_]u8{ opcode("dup"), opcode("end") };
     var stack = test_stack(2);
     var values = Values{};
 
     stack.appendAssumeCapacity(1.0);
-    try run(&program, &stack, &values);
+    try run(&code, &stack, &values);
     try expectEqual(2, stack.items.len);
     try expectEqual(1.0, stack.pop());
     try expectEqual(1.0, stack.pop());
 }
 
-fn not(program: []const u8, stack: *Stack, values: *Values) Allocator.Error!void {
+fn not(code: []const u8, stack: *Stack, values: *Values) Allocator.Error!void {
     stack.appendAssumeCapacity(value.box(!value.truthy(stack.pop())));
-    try @call(.always_tail, instructions[program[0]], .{ program[1..], stack, values });
+    try @call(.always_tail, instructions[code[0]], .{ code[1..], stack, values });
 }
 
 test not {
-    const program = [_]u8{ opcode("not"), opcode("end") };
+    const code = [_]u8{ opcode("not"), opcode("end") };
     var stack = test_stack(1);
     var values = Values{};
 
     stack.appendAssumeCapacity(value.box(false));
-    try run(&program, &stack, &values);
+    try run(&code, &stack, &values);
     try expectEqual(1, stack.items.len);
     try expect(value.truthy(stack.pop()));
 }
 
-fn get(program: []const u8, stack: *Stack, values: *Values) Allocator.Error!void {
+fn get(code: []const u8, stack: *Stack, values: *Values) Allocator.Error!void {
     const n = @sizeOf(Index);
-    const i: Index = @bitCast(program[0..n].*);
+    const i: Index = @bitCast(code[0..n].*);
 
     var p = values.first;
     for (0..i.depth) |_| p = p.?.next;
     stack.appendAssumeCapacity(p.?.data[i.index]);
-    try @call(.always_tail, instructions[program[n]], .{ program[n + 1 ..], stack, values });
+    try @call(.always_tail, instructions[code[n]], .{ code[n + 1 ..], stack, values });
 }
 
 test get {
-    const program = .{opcode("get")} ++ mem.toBytes(Index{ .depth = 0, .index = 0 }) ++ .{opcode("end")};
+    const code = .{opcode("get")} ++ mem.toBytes(Index{ .depth = 0, .index = 0 }) ++ .{opcode("end")};
     var stack = test_stack(1);
     var values = Values{};
     var locals = [_]Box{value.box(@as([*:0]const u8, "Hello, world!"))};
     var scope = Values.Node{ .data = locals[0..] };
 
     values.prepend(&scope);
-    try run(&program, &stack, &values);
+    try run(&code, &stack, &values);
     try expectEqual(1, stack.items.len);
     try expectEqualStrings("Hello, world!", value.unbox(stack.pop()).string);
 }
 
-fn set(program: []const u8, stack: *Stack, values: *Values) Allocator.Error!void {
+fn set(code: []const u8, stack: *Stack, values: *Values) Allocator.Error!void {
     const n = @sizeOf(Index);
-    const i: Index = @bitCast(program[0..n].*);
+    const i: Index = @bitCast(code[0..n].*);
 
     var p = values.first;
     for (0..i.depth) |_| p = p.?.next;
     p.?.data[i.index] = stack.pop();
 
-    try @call(.always_tail, instructions[program[n]], .{ program[n + 1 ..], stack, values });
+    try @call(.always_tail, instructions[code[n]], .{ code[n + 1 ..], stack, values });
 }
 
 test set {
-    const program = .{opcode("set")} ++ mem.toBytes(Index{ .depth = 0, .index = 0 }) ++ .{opcode("end")};
+    const code = .{opcode("set")} ++ mem.toBytes(Index{ .depth = 0, .index = 0 }) ++ .{opcode("end")};
     var stack = test_stack(1);
     var values = Values{};
     var locals = [_]Box{value.box({})};
@@ -156,81 +155,81 @@ test set {
 
     values.prepend(&scope);
     stack.appendAssumeCapacity(value.box(@as([*:0]const u8, "Hello, world!")));
-    try run(&program, &stack, &values);
+    try run(&code, &stack, &values);
     try expectEqual(0, stack.items.len);
     try expectEqualStrings("Hello, world!", value.unbox(locals[0]).string);
 }
 
-fn new(program: []const u8, stack: *Stack, values: *Values) Allocator.Error!void {
+fn new(code: []const u8, stack: *Stack, values: *Values) Allocator.Error!void {
     var scope = try stack.allocator.create(Values.Node);
-    scope.data = try stack.allocator.alloc(Box, program[0]);
+    scope.data = try stack.allocator.alloc(Box, code[0]);
     values.prepend(scope);
-    try @call(.always_tail, instructions[program[1]], .{ program[2..], stack, values });
+    try @call(.always_tail, instructions[code[1]], .{ code[2..], stack, values });
 }
 
-fn del(program: []const u8, stack: *Stack, values: *Values) Allocator.Error!void {
+fn del(code: []const u8, stack: *Stack, values: *Values) Allocator.Error!void {
     const scope = values.popFirst().?;
     stack.allocator.free(scope.data);
     stack.allocator.destroy(scope);
-    try @call(.always_tail, instructions[program[0]], .{ program[1..], stack, values });
+    try @call(.always_tail, instructions[code[0]], .{ code[1..], stack, values });
 }
 
-fn jmp(program: []const u8, stack: *Stack, values: *Values) Allocator.Error!void {
-    const n = mem.readInt(usize, program[0..N], native_endian);
-    try @call(.always_tail, instructions[program[n]], .{ program[n + 1 ..], stack, values });
+fn jmp(code: []const u8, stack: *Stack, values: *Values) Allocator.Error!void {
+    const n = mem.readInt(usize, code[0..N], native_endian);
+    try @call(.always_tail, instructions[code[n]], .{ code[n + 1 ..], stack, values });
 }
 
 test jmp {
-    const program = .{opcode("jmp")} ++ mem.toBytes(@as(usize, N)) ++ .{opcode("end")};
+    const code = .{opcode("jmp")} ++ mem.toBytes(@as(usize, N)) ++ .{opcode("end")};
     var stack = test_stack(0);
     var values = Values{};
-    try run(&program, &stack, &values);
+    try run(&code, &stack, &values);
 }
 
-fn jif(program: []const u8, stack: *Stack, values: *Values) Allocator.Error!void {
-    const n = if (value.truthy(stack.pop())) N else mem.readInt(usize, program[0..N], native_endian);
-    try @call(.always_tail, instructions[program[n]], .{ program[n + 1 ..], stack, values });
+fn jif(code: []const u8, stack: *Stack, values: *Values) Allocator.Error!void {
+    const n = if (value.truthy(stack.pop())) N else mem.readInt(usize, code[0..N], native_endian);
+    try @call(.always_tail, instructions[code[n]], .{ code[n + 1 ..], stack, values });
 }
 
 test jif {
-    const program = .{opcode("jif")} ++ mem.toBytes(@as(usize, N)) ++ .{opcode("end")};
+    const code = .{opcode("jif")} ++ mem.toBytes(@as(usize, N)) ++ .{opcode("end")};
     var stack = test_stack(1);
     var values = Values{};
 
     stack.appendAssumeCapacity(value.box(false));
-    try run(&program, &stack, &values);
+    try run(&code, &stack, &values);
     try expectEqual(0, stack.items.len);
 }
 
-fn ebb(program: []const u8, stack: *Stack, values: *Values) Allocator.Error!void {
-    const n = mem.readInt(usize, program[0..N], native_endian);
-    const p = (program.ptr - n)[0 .. program.len + n];
+fn ebb(code: []const u8, stack: *Stack, values: *Values) Allocator.Error!void {
+    const n = mem.readInt(usize, code[0..N], native_endian);
+    const p = (code.ptr - n)[0 .. code.len + n];
     try @call(.always_tail, instructions[p[0]], .{ p[1..], stack, values });
 }
 
-fn call(program: []const u8, stack: *Stack, values: *Values) Allocator.Error!void { // return address
+fn call(code: []const u8, stack: *Stack, values: *Values) Allocator.Error!void { // return address
     const entry: usize = @bitCast(stack.pop()); // function address
-    const index: usize = @bitCast(stack.items[stack.items.len - program[0]]); // return address
+    const index: usize = @bitCast(stack.items[stack.items.len - code[0]]); // return address
     const offset = index - entry; // always +ve (can only call function _after_ they were defined)
-    const next = (program.ptr - offset)[0 .. program.len + offset];
+    const next = (code.ptr - offset)[0 .. code.len + offset];
     try @call(.always_tail, instructions[next[0]], .{ next[1..], stack, values });
 }
 
-fn ret(program: []const u8, stack: *Stack, values: *Values) Allocator.Error!void {
+fn ret(code: []const u8, stack: *Stack, values: *Values) Allocator.Error!void {
     // assumes exactly 1 result on stack
     const index: usize = @bitCast(stack.orderedRemove(stack.items.len - 2));
-    const entry = mem.readInt(usize, program[0..N], native_endian);
+    const entry = mem.readInt(usize, code[0..N], native_endian);
     const offset = index + N + 1 - entry;
-    try @call(.always_tail, instructions[program[offset]], .{ program[offset + 1 ..], stack, values });
+    try @call(.always_tail, instructions[code[offset]], .{ code[offset + 1 ..], stack, values });
 }
 
 const Binary = @TypeOf(add);
 
 fn binary(comptime op: Binary) Instruction {
     return struct {
-        fn wrap(program: []const u8, stack: *Stack, values: *Values) Allocator.Error!void {
+        fn wrap(code: []const u8, stack: *Stack, values: *Values) Allocator.Error!void {
             stack.appendAssumeCapacity(op(stack.pop(), stack.pop()));
-            try @call(.always_tail, instructions[program[0]], .{ program[1..], stack, values });
+            try @call(.always_tail, instructions[code[0]], .{ code[1..], stack, values });
         }
     }.wrap;
 }
@@ -240,12 +239,12 @@ fn add(a: Box, b: Box) Box {
 }
 
 test add {
-    const program = [_]u8{ opcode("add"), opcode("end") };
+    const code = [_]u8{ opcode("add"), opcode("end") };
     var stack = test_stack(2);
     var values = Values{};
 
     for (0..2) |_| stack.appendAssumeCapacity(1.0);
-    try run(&program, &stack, &values);
+    try run(&code, &stack, &values);
     try expectEqual(1, stack.items.len);
     try expectEqual(2.0, stack.pop());
 }
@@ -264,7 +263,7 @@ fn div(a: Box, b: Box) Box {
 
 fn compare(comptime op: math.CompareOperator) Instruction {
     return struct {
-        fn wrap(program: []const u8, stack: *Stack, values: *Values) Allocator.Error!void {
+        fn wrap(code: []const u8, stack: *Stack, values: *Values) Allocator.Error!void {
             const b = stack.pop();
             const a = stack.pop();
             stack.appendAssumeCapacity(value.box(switch (value.tag(a)) {
@@ -274,19 +273,19 @@ fn compare(comptime op: math.CompareOperator) Instruction {
                 },
                 else => math.compare(a, op, b),
             }));
-            try @call(.always_tail, instructions[program[0]], .{ program[1..], stack, values });
+            try @call(.always_tail, instructions[code[0]], .{ code[1..], stack, values });
         }
     }.wrap;
 }
 
 fn compareTester(a: Box, comptime op: []const u8, b: Box) !bool {
-    const program = [_]u8{ opcode(op), opcode("end") };
+    const code = [_]u8{ opcode(op), opcode("end") };
     var stack = test_stack(2);
     var values = Values{};
 
     stack.appendAssumeCapacity(a);
     stack.appendAssumeCapacity(b);
-    try run(&program, &stack, &values);
+    try run(&code, &stack, &values);
     try expectEqual(1, stack.items.len);
     return value.truthy(stack.pop());
 }
@@ -308,7 +307,7 @@ test compare {
 
 fn equal(ok: bool) Instruction {
     return struct {
-        fn wrap(program: []const u8, stack: *Stack, values: *Values) Allocator.Error!void {
+        fn wrap(code: []const u8, stack: *Stack, values: *Values) Allocator.Error!void {
             const b = stack.pop();
             const a = stack.pop();
             stack.appendAssumeCapacity(value.box(switch (value.tag(a)) {
@@ -318,7 +317,7 @@ fn equal(ok: bool) Instruction {
                 },
                 else => (a == b) == ok,
             }));
-            try @call(.always_tail, instructions[program[0]], .{ program[1..], stack, values });
+            try @call(.always_tail, instructions[code[0]], .{ code[1..], stack, values });
         }
     }.wrap;
 }
@@ -379,38 +378,38 @@ pub fn opcode(comptime name: []const u8) u8 {
     return @truncate(names.getIndex(name) orelse 0);
 }
 
-pub fn run(program: []const u8, stack: *Stack, values: *Values) Allocator.Error!void {
-    try instructions[program[0]](program[1..], stack, values);
+pub fn run(code: []const u8, stack: *Stack, values: *Values) Allocator.Error!void {
+    try instructions[code[0]](code[1..], stack, values);
 }
 
-pub fn disassemble(program: []const u8, writer: anytype) !void {
+pub fn disassemble(code: []const u8, writer: anytype) !void {
     var i: usize = 0;
-    while (i < program.len) {
-        const op = program[i];
+    while (i < code.len) {
+        const op = code[i];
         i += 1;
         switch (op) {
             names.getIndex("str").? => {
-                const s = mem.sliceTo(program[i..], 0);
+                const s = mem.sliceTo(code[i..], 0);
                 try writer.print("{d} \"{s}\"\n", .{ i, s });
                 i += s.len + 1;
             },
             names.getIndex("box").? => {
-                const val: Box = @bitCast(program[i..][0..N].*);
+                const val: Box = @bitCast(code[i..][0..N].*);
                 try writer.print("{d} {x}\n", .{ i, val });
                 i += N;
             },
             names.getIndex("get").?, names.getIndex("set").? => {
                 const n = @sizeOf(Index);
-                const j: Index = @bitCast(program[i..][0..n].*);
+                const j: Index = @bitCast(code[i..][0..n].*);
                 try writer.print("{d} {s} {d}@{d}\n", .{ i, names.keys()[op], j.index, j.depth });
                 i += n;
             },
             names.getIndex("new").?, names.getIndex("call").? => {
-                try writer.print("{d} {s} {d}\n", .{ i, names.keys()[op], program[i] });
+                try writer.print("{d} {s} {d}\n", .{ i, names.keys()[op], code[i] });
                 i += 1;
             },
             names.getIndex("jmp").?, names.getIndex("jif").?, names.getIndex("ebb").?, names.getIndex("ret").? => {
-                const offset = mem.readInt(usize, program[i..][0..N], native_endian);
+                const offset = mem.readInt(usize, code[i..][0..N], native_endian);
                 try writer.print("{d} {s} {d}\n", .{ i, names.keys()[op], offset });
                 i += N;
             },
