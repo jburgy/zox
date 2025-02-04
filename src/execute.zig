@@ -13,28 +13,35 @@ const value = @import("value.zig");
 const Box = value.Box;
 const N: comptime_int = @sizeOf(Box);
 pub const Stack = std.ArrayList(Box);
+const Code = std.io.FixedBufferStream([]const u8);
 const Instruction = @TypeOf(end);
 const InstructionPointer = @TypeOf(&end);
 
 pub const Values = std.SinglyLinkedList([]Box);
 pub const Index = packed struct(u32) { depth: u8, index: u24 };
 
+const Error = error{
+    EndOfStream,
+    OutOfMemory,
+};
+
 fn test_stack(n: comptime_int) Stack {
     var stack = std.ArrayListUnmanaged(Box).initBuffer(@constCast(&[_]Box{0.0} ** n));
     return stack.toManaged(testing.allocator);
 }
 
-fn end(code: []const u8, stack: *Stack, values: *Values) Allocator.Error!void {
+fn end(code: *Code, stack: *Stack, values: *Values) Error!void {
     _ = stack;
     _ = values;
-    if (code.len != 0) unreachable;
+    if (try code.getPos() != try code.getEndPos()) unreachable;
 }
 
-fn str(code: []const u8, stack: *Stack, values: *Values) Allocator.Error!void {
-    const s = mem.sliceTo(code, 0);
+fn str(code: *Code, stack: *Stack, values: *Values) Error!void {
+    const s = mem.sliceTo(code.buffer[code.pos..], 0);
     const n = s.len + 1; // skip past nil sentinel
     stack.appendAssumeCapacity(value.box(s));
-    try @call(.always_tail, instructions[code[n]], .{ code[n + 1 ..], stack, values });
+    try code.seekBy(@intCast(n));
+    try @call(.always_tail, instructions[try code.reader().readByte()], .{ code, stack, values });
 }
 
 test str {
@@ -48,9 +55,11 @@ test str {
     try expectEqualStrings(expected, value.unbox(stack.pop()).string);
 }
 
-fn box(code: []const u8, stack: *Stack, values: *Values) Allocator.Error!void {
-    stack.appendAssumeCapacity(@bitCast(code[0..N].*));
-    try @call(.always_tail, instructions[code[N]], .{ code[N + 1 ..], stack, values });
+fn box(code: *Code, stack: *Stack, values: *Values) Error!void {
+    var buf: [N]u8 = undefined;
+    _ = try code.read(&buf);
+    stack.appendAssumeCapacity(@bitCast(buf));
+    try @call(.always_tail, instructions[try code.reader().readByte()], .{ code, stack, values });
 }
 
 test box {
@@ -64,9 +73,9 @@ test box {
     try expectEqual(0.0, stack.pop());
 }
 
-fn pop(code: []const u8, stack: *Stack, values: *Values) Allocator.Error!void {
+fn pop(code: *Code, stack: *Stack, values: *Values) Error!void {
     _ = stack.pop();
-    try @call(.always_tail, instructions[code[0]], .{ code[1..], stack, values });
+    try @call(.always_tail, instructions[try code.reader().readByte()], .{ code, stack, values });
 }
 
 test pop {
@@ -79,9 +88,9 @@ test pop {
     try expectEqual(0, stack.items.len);
 }
 
-fn dup(code: []const u8, stack: *Stack, values: *Values) Allocator.Error!void {
+fn dup(code: *Code, stack: *Stack, values: *Values) Error!void {
     stack.appendAssumeCapacity(stack.getLast());
-    try @call(.always_tail, instructions[code[0]], .{ code[1..], stack, values });
+    try @call(.always_tail, instructions[try code.reader().readByte()], .{ code, stack, values });
 }
 
 test dup {
@@ -96,9 +105,9 @@ test dup {
     try expectEqual(1.0, stack.pop());
 }
 
-fn not(code: []const u8, stack: *Stack, values: *Values) Allocator.Error!void {
+fn not(code: *Code, stack: *Stack, values: *Values) Error!void {
     stack.appendAssumeCapacity(value.box(!value.truthy(stack.pop())));
-    try @call(.always_tail, instructions[code[0]], .{ code[1..], stack, values });
+    try @call(.always_tail, instructions[try code.reader().readByte()], .{ code, stack, values });
 }
 
 test not {
@@ -112,14 +121,16 @@ test not {
     try expect(value.truthy(stack.pop()));
 }
 
-fn get(code: []const u8, stack: *Stack, values: *Values) Allocator.Error!void {
-    const n = @sizeOf(Index);
-    const i: Index = @bitCast(code[0..n].*);
+fn get(code: *Code, stack: *Stack, values: *Values) Error!void {
+    const reader = code.reader();
+    var buffer: [@sizeOf(Index)]u8 = undefined;
+    _ = try reader.read(&buffer);
+    const i: Index = @bitCast(buffer);
 
     var p = values.first;
     for (0..i.depth) |_| p = p.?.next;
     stack.appendAssumeCapacity(p.?.data[i.index]);
-    try @call(.always_tail, instructions[code[n]], .{ code[n + 1 ..], stack, values });
+    try @call(.always_tail, instructions[try reader.readByte()], .{ code, stack, values });
 }
 
 test get {
@@ -135,15 +146,17 @@ test get {
     try expectEqualStrings("Hello, world!", value.unbox(stack.pop()).string);
 }
 
-fn set(code: []const u8, stack: *Stack, values: *Values) Allocator.Error!void {
-    const n = @sizeOf(Index);
-    const i: Index = @bitCast(code[0..n].*);
+fn set(code: *Code, stack: *Stack, values: *Values) Error!void {
+    const reader = code.reader();
+    var buffer: [@sizeOf(Index)]u8 = undefined;
+    _ = try reader.read(&buffer);
+    const i: Index = @bitCast(buffer);
 
     var p = values.first;
     for (0..i.depth) |_| p = p.?.next;
     p.?.data[i.index] = stack.pop();
 
-    try @call(.always_tail, instructions[code[n]], .{ code[n + 1 ..], stack, values });
+    try @call(.always_tail, instructions[try reader.readByte()], .{ code, stack, values });
 }
 
 test set {
@@ -160,23 +173,26 @@ test set {
     try expectEqualStrings("Hello, world!", value.unbox(locals[0]).string);
 }
 
-fn new(code: []const u8, stack: *Stack, values: *Values) Allocator.Error!void {
+fn new(code: *Code, stack: *Stack, values: *Values) Error!void {
+    const reader = code.reader();
     var scope = try stack.allocator.create(Values.Node);
-    scope.data = try stack.allocator.alloc(Box, code[0]);
+    scope.data = try stack.allocator.alloc(Box, try reader.readByte());
     values.prepend(scope);
-    try @call(.always_tail, instructions[code[1]], .{ code[2..], stack, values });
+    try @call(.always_tail, instructions[try reader.readByte()], .{ code, stack, values });
 }
 
-fn del(code: []const u8, stack: *Stack, values: *Values) Allocator.Error!void {
+fn del(code: *Code, stack: *Stack, values: *Values) Error!void {
     const scope = values.popFirst().?;
     stack.allocator.free(scope.data);
     stack.allocator.destroy(scope);
-    try @call(.always_tail, instructions[code[0]], .{ code[1..], stack, values });
+    try @call(.always_tail, instructions[try code.reader().readByte()], .{ code, stack, values });
 }
 
-fn jmp(code: []const u8, stack: *Stack, values: *Values) Allocator.Error!void {
-    const n = mem.readInt(usize, code[0..N], native_endian);
-    try @call(.always_tail, instructions[code[n]], .{ code[n + 1 ..], stack, values });
+fn jmp(code: *Code, stack: *Stack, values: *Values) Error!void {
+    const reader = code.reader();
+    const n = try reader.readInt(usize, native_endian) - N;
+    try code.seekBy(@intCast(n));
+    try @call(.always_tail, instructions[try reader.readByte()], .{ code, stack, values });
 }
 
 test jmp {
@@ -186,9 +202,12 @@ test jmp {
     try run(&code, &stack, &values);
 }
 
-fn jif(code: []const u8, stack: *Stack, values: *Values) Allocator.Error!void {
-    const n = if (value.truthy(stack.pop())) N else mem.readInt(usize, code[0..N], native_endian);
-    try @call(.always_tail, instructions[code[n]], .{ code[n + 1 ..], stack, values });
+fn jif(code: *Code, stack: *Stack, values: *Values) Error!void {
+    const reader = code.reader();
+    const n = try reader.readInt(usize, native_endian) - N;
+    if (!value.truthy(stack.pop()))
+        try code.seekBy(@intCast(n));
+    try @call(.always_tail, instructions[try reader.readByte()], .{ code, stack, values });
 }
 
 test jif {
@@ -201,35 +220,36 @@ test jif {
     try expectEqual(0, stack.items.len);
 }
 
-fn ebb(code: []const u8, stack: *Stack, values: *Values) Allocator.Error!void {
-    const n = mem.readInt(usize, code[0..N], native_endian);
-    const p = (code.ptr - n)[0 .. code.len + n];
-    try @call(.always_tail, instructions[p[0]], .{ p[1..], stack, values });
+fn ebb(code: *Code, stack: *Stack, values: *Values) Error!void {
+    const reader = code.reader();
+    const n = try reader.readInt(isize, native_endian) + N;
+    try code.seekBy(-n);
+    try @call(.always_tail, instructions[try reader.readByte()], .{ code, stack, values });
 }
 
-fn call(code: []const u8, stack: *Stack, values: *Values) Allocator.Error!void { // return address
+fn call(code: *Code, stack: *Stack, values: *Values) Error!void {
+    const reader = code.reader();
+    stack.insertAssumeCapacity(stack.items.len - try reader.readByte(), @bitCast(try code.getPos()));
     const entry: usize = @bitCast(stack.pop()); // function address
-    const index: usize = @bitCast(stack.items[stack.items.len - code[0]]); // return address
-    const offset = index - entry; // always +ve (can only call function _after_ they were defined)
-    const next = (code.ptr - offset)[0 .. code.len + offset];
-    try @call(.always_tail, instructions[next[0]], .{ next[1..], stack, values });
+    try code.seekTo(entry);
+    try @call(.always_tail, instructions[try reader.readByte()], .{ code, stack, values });
 }
 
-fn ret(code: []const u8, stack: *Stack, values: *Values) Allocator.Error!void {
+fn ret(code: *Code, stack: *Stack, values: *Values) Error!void {
     // assumes exactly 1 result on stack
+    const reader = code.reader();
     const index: usize = @bitCast(stack.orderedRemove(stack.items.len - 2));
-    const entry = mem.readInt(usize, code[0..N], native_endian);
-    const offset = index + N + 1 - entry;
-    try @call(.always_tail, instructions[code[offset]], .{ code[offset + 1 ..], stack, values });
+    try code.seekTo(index);
+    try @call(.always_tail, instructions[try reader.readByte()], .{ code, stack, values });
 }
 
 const Binary = @TypeOf(add);
 
 fn binary(comptime op: Binary) Instruction {
     return struct {
-        fn wrap(code: []const u8, stack: *Stack, values: *Values) Allocator.Error!void {
+        fn wrap(code: *Code, stack: *Stack, values: *Values) Error!void {
             stack.appendAssumeCapacity(op(stack.pop(), stack.pop()));
-            try @call(.always_tail, instructions[code[0]], .{ code[1..], stack, values });
+            try @call(.always_tail, instructions[try code.reader().readByte()], .{ code, stack, values });
         }
     }.wrap;
 }
@@ -263,7 +283,7 @@ fn div(a: Box, b: Box) Box {
 
 fn compare(comptime op: math.CompareOperator) Instruction {
     return struct {
-        fn wrap(code: []const u8, stack: *Stack, values: *Values) Allocator.Error!void {
+        fn wrap(code: *Code, stack: *Stack, values: *Values) Error!void {
             const b = stack.pop();
             const a = stack.pop();
             stack.appendAssumeCapacity(value.box(switch (value.tag(a)) {
@@ -273,7 +293,7 @@ fn compare(comptime op: math.CompareOperator) Instruction {
                 },
                 else => math.compare(a, op, b),
             }));
-            try @call(.always_tail, instructions[code[0]], .{ code[1..], stack, values });
+            try @call(.always_tail, instructions[try code.reader().readByte()], .{ code, stack, values });
         }
     }.wrap;
 }
@@ -307,7 +327,7 @@ test compare {
 
 fn equal(ok: bool) Instruction {
     return struct {
-        fn wrap(code: []const u8, stack: *Stack, values: *Values) Allocator.Error!void {
+        fn wrap(code: *Code, stack: *Stack, values: *Values) Error!void {
             const b = stack.pop();
             const a = stack.pop();
             stack.appendAssumeCapacity(value.box(switch (value.tag(a)) {
@@ -317,7 +337,7 @@ fn equal(ok: bool) Instruction {
                 },
                 else => (a == b) == ok,
             }));
-            try @call(.always_tail, instructions[code[0]], .{ code[1..], stack, values });
+            try @call(.always_tail, instructions[try code.reader().readByte()], .{ code, stack, values });
         }
     }.wrap;
 }
@@ -378,11 +398,12 @@ pub fn opcode(comptime name: []const u8) u8 {
     return @truncate(names.getIndex(name) orelse 0);
 }
 
-pub fn run(code: []const u8, stack: *Stack, values: *Values) Allocator.Error!void {
-    try instructions[code[0]](code[1..], stack, values);
+pub fn run(buffer: []const u8, stack: *Stack, values: *Values) Error!void {
+    var code = Code{ .buffer = buffer, .pos = 0 };
+    try instructions[try code.reader().readByte()](&code, stack, values);
 }
 
-pub fn disassemble(code: []const u8, writer: anytype) !void {
+pub fn disassemble(code: *Code, writer: anytype) !void {
     var i: usize = 0;
     while (i < code.len) {
         const op = code[i];

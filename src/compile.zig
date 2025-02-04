@@ -248,21 +248,14 @@ fn compile(
             const side_effect = try compile(code, indices, tokens, nodes, nodes[node + count].node, parms);
             assert(side_effect + @as(isize, @intCast(parms.len)) == 1);
             try code.append(opcode("ret"));
-            try code.appendNTimes(0xAA, N);
-            const end = code.items.len;
-            code.replaceRangeAssumeCapacity(body, N, &mem.toBytes(end - body));
-            code.replaceRangeAssumeCapacity(end - N, N, &mem.toBytes(end));
+            code.replaceRangeAssumeCapacity(body, N, &mem.toBytes(code.items.len - body));
         },
         .RIGHT_PAREN => {
-            try code.append(opcode("box"));
-            const start = code.items.len;
-            try code.appendNTimes(0xAA, N);
             for (0..count) |i|
                 effect += try compile(code, indices, tokens, nodes, nodes[node + count - i].node, null);
             assert(effect == count);
             try code.append(opcode("call"));
             effect -= 1;
-            code.replaceRangeAssumeCapacity(start, N, &mem.toBytes(code.items.len));
             try code.append(@truncate(count));
         },
         else => unreachable,
