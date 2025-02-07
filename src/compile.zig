@@ -8,8 +8,6 @@ const Token = tokenize.Token;
 const parse = @import("parse.zig");
 const Node = parse.Node;
 const exec = @import("execute.zig");
-const Stack = exec.Stack;
-const Values = exec.Values;
 const opcode = exec.opcode;
 const run = exec.run;
 const value = @import("value.zig");
@@ -17,7 +15,7 @@ comptime {
     _ = @import("emit.zig");
 }
 
-const Indices = std.StringArrayHashMap(u8);
+const Code = std.ArrayList(u8);
 const N = @sizeOf(value.Box);
 
 // See https://github.com/ziglang/zig/pull/20074
@@ -39,24 +37,30 @@ const greedy = init: {
 const Compiler = struct {
     tokens: []const Token,
     nodes: []const Node,
-    locals: std.StringArrayHashMap(void),
-    code: std.ArrayList(u8),
+    locals: std.ArrayListUnmanaged(u32),
+    code: Code,
 
-    pub fn init(allocator: Allocator, tokens: []const Token, nodes: []const Node) Compiler {
+    pub fn init(allocator: Allocator, tokens: []const Token, nodes: []const Node, locals: []u32) Compiler {
         return .{
             .tokens = tokens,
             .nodes = nodes,
-            .locals = std.StringArrayHashMap(void).init(allocator),
-            .code = std.ArrayList(u8).init(allocator),
+            .locals = std.ArrayListUnmanaged(u32).initBuffer(locals),
+            .code = Code.init(allocator),
         };
     }
 
     pub fn deinit(self: *Compiler) void {
-        self.locals.deinit();
         self.code.deinit();
     }
 
-    pub fn compile(self: *Compiler, node: usize, params: ?[]const Node) !isize {
+    fn getIndex(self: Compiler, name: []const u8) ?usize {
+        const tokens = self.tokens;
+        for (self.locals.items, 0..) |token, i|
+            if (mem.eql(u8, tokens[token].src, name)) return i;
+        return null;
+    }
+
+    pub fn compile(self: *Compiler, node: usize) !isize {
         const token = self.tokens[self.nodes[node].head.token];
         const count = self.nodes[node].head.count;
         var effect: isize = 0;
@@ -64,7 +68,7 @@ const Compiler = struct {
             .EOF => {
                 const index = node + 1;
                 for (self.nodes[index .. index + count]) |child|
-                    effect += try self.compile(child.node, null);
+                    effect += try self.compile(child.node);
                 try self.code.append(opcode("end"));
             },
             .NUMBER => {
@@ -78,11 +82,11 @@ const Compiler = struct {
                     try self.code.append(opcode("box"));
                     try self.code.appendSlice(&mem.toBytes(value.box(0.0)));
                     effect += 1;
-                    effect += try self.compile(self.nodes[node + 1].node, null);
+                    effect += try self.compile(self.nodes[node + 1].node);
                 } else {
                     assert(count == 2);
-                    effect += try self.compile(self.nodes[node + 1].node, null);
-                    effect += try self.compile(self.nodes[node + 2].node, null);
+                    effect += try self.compile(self.nodes[node + 1].node);
+                    effect += try self.compile(self.nodes[node + 2].node);
                 }
                 assert(effect >= 2);
                 try self.code.append(greedy.get(token.tag).?);
@@ -90,19 +94,19 @@ const Compiler = struct {
             },
             .AND => { // if (a) a else b
                 assert(count == 2);
-                effect += try self.compile(self.nodes[node + 1].node, null);
+                effect += try self.compile(self.nodes[node + 1].node);
                 try self.code.append(opcode("dup"));
                 try self.code.append(opcode("jif"));
                 const offset = self.code.items.len;
                 try self.code.appendNTimes(0xAA, N); // https://ziglang.org/documentation/master/#undefined
                 try self.code.append(opcode("pop"));
                 effect -= 1;
-                effect += try self.compile(self.nodes[node + 2].node, null);
+                effect += try self.compile(self.nodes[node + 2].node);
                 self.code.replaceRangeAssumeCapacity(offset, N, &mem.toBytes(self.code.items.len - offset));
             },
             .OR => { // if (!a) a else b
                 assert(count == 2);
-                effect += try self.compile(self.nodes[node + 1].node, null);
+                effect += try self.compile(self.nodes[node + 1].node);
                 try self.code.append(opcode("dup"));
                 try self.code.append(opcode("not"));
                 try self.code.append(opcode("jif"));
@@ -110,26 +114,24 @@ const Compiler = struct {
                 try self.code.appendNTimes(0xAA, N);
                 try self.code.append(opcode("pop"));
                 effect -= 1;
-                effect += try self.compile(self.nodes[node + 2].node, null);
+                effect += try self.compile(self.nodes[node + 2].node);
                 self.code.replaceRangeAssumeCapacity(offset, N, &mem.toBytes(self.code.items.len - offset));
             },
             .VAR => {
                 if (count > 1) {
-                    effect += try self.compile(self.nodes[node + 2].node, null);
+                    effect += try self.compile(self.nodes[node + 2].node);
                 } else {
                     try self.code.append(opcode("box"));
                     try self.code.appendSlice(&mem.toBytes(value.box({})));
                     effect += 1;
                 }
                 // https://discord.com/channels/605571803288698900/1333444838691180554
-                const map = &self.locals;
-                const name = self.tokens[self.nodes[node + 1].node].src;
-                try map.putNoClobber(name, {});
+                self.locals.appendAssumeCapacity(self.nodes[node + 1].node);
             },
             .EQUAL => {
                 const name = self.tokens[self.nodes[self.nodes[node + 1].node].head.token].src;
-                if (self.locals.getIndex(name)) |index| {
-                    effect += try self.compile(self.nodes[node + 2].node, null);
+                if (self.getIndex(name)) |index| {
+                    effect += try self.compile(self.nodes[node + 2].node);
                     try self.code.append(opcode("set"));
                     try self.code.append(@truncate(index));
                     effect -= 1;
@@ -140,7 +142,7 @@ const Compiler = struct {
             },
             .IDENTIFIER => {
                 const name = token.src;
-                if (self.locals.getIndex(name)) |index| {
+                if (self.getIndex(name)) |index| {
                     try self.code.append(opcode("get"));
                     try self.code.append(@truncate(index));
                     effect += 1;
@@ -151,19 +153,19 @@ const Compiler = struct {
             },
             .IF => {
                 assert(count == 2 or count == 3);
-                effect += try self.compile(self.nodes[node + 1].node, null);
+                effect += try self.compile(self.nodes[node + 1].node);
                 try self.code.append(opcode("jif"));
                 const offset = self.code.items.len;
                 try self.code.appendNTimes(0xAA, N);
                 effect -= 1;
-                effect += try self.compile(self.nodes[node + 2].node, null);
+                effect += try self.compile(self.nodes[node + 2].node);
                 if (count == 3) {
                     try self.code.append(opcode("jmp"));
                     const other = self.code.items.len;
                     try self.code.appendNTimes(0xAA, N);
                     effect -= 1;
                     self.code.replaceRangeAssumeCapacity(offset, N, &mem.toBytes(self.code.items.len - offset));
-                    effect += try self.compile(self.nodes[node + 3].node, null);
+                    effect += try self.compile(self.nodes[node + 3].node);
                     self.code.replaceRangeAssumeCapacity(other, N, &mem.toBytes(self.code.items.len - other));
                 } else {
                     self.code.replaceRangeAssumeCapacity(offset, N, &mem.toBytes(self.code.items.len - offset));
@@ -172,27 +174,27 @@ const Compiler = struct {
             .WHILE => {
                 assert(count == 2);
                 const start = self.code.items.len;
-                effect += try self.compile(self.nodes[node + 1].node, null);
+                effect += try self.compile(self.nodes[node + 1].node);
                 try self.code.append(opcode("jif"));
                 const offset = self.code.items.len;
                 try self.code.appendNTimes(0xAA, N);
                 effect -= 1;
-                effect += try self.compile(self.nodes[node + 2].node, null);
+                effect += try self.compile(self.nodes[node + 2].node);
                 try self.code.append(opcode("ebb"));
                 try self.code.appendSlice(&mem.toBytes(self.code.items.len - start));
                 self.code.replaceRangeAssumeCapacity(offset, N, &mem.toBytes(self.code.items.len - offset));
             },
             .FOR => {
                 assert(count == 4);
-                effect += try self.compile(self.nodes[node + 1].node, null);
+                effect += try self.compile(self.nodes[node + 1].node);
                 const start = self.code.items.len;
-                effect += try self.compile(self.nodes[node + 2].node, null);
+                effect += try self.compile(self.nodes[node + 2].node);
                 try self.code.append(opcode("jif"));
                 const offset = self.code.items.len;
                 try self.code.appendNTimes(0xAA, N);
                 effect -= 1;
-                effect += try self.compile(self.nodes[node + 3].node, null);
-                const n = try self.compile(self.nodes[node + 4].node, null);
+                effect += try self.compile(self.nodes[node + 3].node);
+                const n = try self.compile(self.nodes[node + 4].node);
                 try self.code.appendNTimes(opcode("pop"), @abs(n));
                 effect -= n;
                 try self.code.append(opcode("ebb"));
@@ -200,51 +202,42 @@ const Compiler = struct {
                 self.code.replaceRangeAssumeCapacity(offset, N, &mem.toBytes(self.code.items.len - offset));
             },
             .RIGHT_BRACE => {
-                const depth = self.locals.count();
-                if (params) |parms| {
-                    // function prologue (prime new scope with function parameters)
-                    try self.locals.ensureUnusedCapacity(@truncate(parms.len));
-                    for (parms) |param|
-                        self.locals.putAssumeCapacityNoClobber(self.tokens[param.head.token].src, {});
-                }
+                const depth = self.locals.items.len;
                 const index = node + 1;
                 for (self.nodes[index .. index + count]) |child|
-                    effect += try self.compile(child.node, params);
-                const n = self.locals.count() - depth;
+                    effect += try self.compile(child.node);
+                const n = self.locals.items.len - depth;
                 for (0..n) |_| _ = self.locals.pop();
                 try self.code.appendNTimes(opcode("pop"), n);
                 effect -= @intCast(n);
             },
             .FUN => {
                 assert(count >= 2);
-                // install function address in scope
-                const map = &self.locals;
-                const name = self.tokens[self.nodes[node + 1].node].src;
-                try map.putNoClobber(name, {});
+                var locals: [std.math.maxInt(u8)]u32 = undefined;
+                var child = Compiler.init(self.code.allocator, self.tokens, self.nodes, &locals);
+                defer child.deinit();
+                for (child.nodes[node + 1 .. node + count]) |name|
+                    child.locals.appendAssumeCapacity(name.head.token);
+                _ = try child.compile(self.nodes[node + count].node);
+                try child.code.append(opcode("ret"));
+                // install function address (past "box value; jmp offset") in parent scope
+                self.locals.appendAssumeCapacity(self.nodes[node + 1].node);
                 try self.code.append(opcode("box"));
-                const start = self.code.items.len;
-                try self.code.appendNTimes(0xAA, N);
+                try self.code.appendSlice(&mem.toBytes(self.code.items.len + 2 * N + 1));
+                effect += 1;
                 // skip over function body
                 try self.code.append(opcode("jmp"));
-                const body = self.code.items.len;
-                try self.code.appendNTimes(0xAA, N);
-                self.code.replaceRangeAssumeCapacity(start, N, &mem.toBytes(self.code.items.len));
-                const parms = self.nodes[node + 2 .. node + count];
-                const side_effect = try self.compile(self.nodes[node + count].node, parms);
-                std.debug.print("side_effect = {d}, parms.len = {d}\n", .{ side_effect, parms.len });
-                assert(side_effect + @as(isize, @intCast(parms.len)) == 1);
-                try self.code.append(opcode("ret"));
-                try self.code.append(@truncate(parms.len));
-                self.code.replaceRangeAssumeCapacity(body, N, &mem.toBytes(self.code.items.len - body));
+                try self.code.appendSlice(&mem.toBytes(child.code.items.len + N));
+                try self.code.appendSlice(child.code.items);
             },
             .RIGHT_PAREN => {
                 try self.code.append(opcode("box"));
                 try self.code.appendSlice(&mem.toBytes(value.box({})));
-                for (0..count) |i|
-                    effect += try self.compile(self.nodes[node + count - i].node, null);
+                const index = node + 1;
+                for (self.nodes[index .. index + count]) |child|
+                    effect += try self.compile(child.node);
                 assert(effect == count);
                 try self.code.append(opcode("call"));
-                effect -= 1;
                 try self.code.append(@truncate(count));
             },
             else => unreachable,
@@ -273,9 +266,10 @@ test Compiler {
     const one = mem.toBytes(value.box(1.0));
     const expected = .{opcode("box")} ++ one ++ .{opcode("box")} ++ one ++ .{ opcode("add"), opcode("end") };
 
-    var compiler = Compiler.init(testing.allocator, tokens[0..], nodes[0..]);
+    var locals: [std.math.maxInt(u8)]u32 = undefined;
+    var compiler = Compiler.init(testing.allocator, tokens[0..], nodes[0..], &locals);
     defer compiler.deinit();
-    const n = try compiler.compile(5, null);
+    const n = try compiler.compile(5);
     try testing.expectEqual(1, n);
     try testing.expectEqualStrings(expected[0..], compiler.code.items);
 }
@@ -292,16 +286,18 @@ pub fn execute(allocator: Allocator, source: []const u8) !value.Box {
     const root = state.node.node;
     std.debug.assert(root + 1 + nodes.items[root].head.count == nodes.items.len);
 
-    var compiler = Compiler.init(allocator, tokens, nodes.items);
+    var locals: [std.math.maxInt(u8)]u32 = undefined;
+    var compiler = Compiler.init(allocator, tokens, nodes.items, &locals);
     defer compiler.deinit();
-    const n = try compiler.compile(root, null);
+    const n = try compiler.compile(root);
 
-    var stack = try Stack.initCapacity(allocator, 16);
-    defer stack.deinit();
-    try run(compiler.code.items, &stack);
+    var values = exec.allocate_values(std.math.maxInt(u8));
+    var frames = exec.allocate_frames(64);
+    frames.appendAssumeCapacity(.{});
+    try run(compiler.code.items, &values, &frames);
 
-    std.debug.assert(stack.items.len == n);
-    return stack.pop();
+    std.debug.assert(values.items.len == n);
+    return values.pop();
 }
 
 test execute {
@@ -316,10 +312,10 @@ test execute {
         10.0,
         try execute(allocator, "var sum = 0; for (var i = 0; i < 5; i = i + 1) sum = sum + i; sum"),
     );
-    // try testing.expectEqual(
-    //     1.0,
-    //     try execute(allocator, "fun f(x) { x + 1 }; f(0)"),
-    // );
+    try testing.expectEqual(
+        1.0,
+        try execute(allocator, "fun f(x) { x + 1 }; f(0)"),
+    );
 }
 
 test {
