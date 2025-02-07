@@ -293,7 +293,6 @@ pub fn execute(allocator: Allocator, source: []const u8) !value.Box {
 
     var values = exec.allocate_values(std.math.maxInt(u8));
     var frames = exec.allocate_frames(64);
-    frames.appendAssumeCapacity(.{});
     try run(compiler.code.items, &values, &frames);
 
     std.debug.assert(values.items.len == n);

@@ -121,20 +121,18 @@ test not {
 
 fn get(code: *Code, values: *Values, frames: *Frames) Error!void {
     const reader = code.reader();
-    const frame = frames.getLast();
     const i = try reader.readByte();
 
-    values.appendAssumeCapacity(values.items[i + frame.offset]);
+    values.appendAssumeCapacity(values.items[i]);
     try @call(.always_tail, instructions[try reader.readByte()], .{ code, values, frames });
 }
 
 test get {
     const code = .{ opcode("get"), 0, opcode("end") };
     var values = allocate_values(2);
-    var frames = allocate_frames(1);
+    var frames = allocate_frames(0);
 
     values.appendAssumeCapacity(value.box(@as([*:0]const u8, "Hello, world!")));
-    frames.appendAssumeCapacity(.{});
     try run(&code, &values, &frames);
     try expectEqual(2, values.items.len);
     for (0..2) |_|
@@ -143,9 +141,8 @@ test get {
 
 fn set(code: *Code, values: *Values, frames: *Frames) Error!void {
     const reader = code.reader();
-    const frame = frames.getLast();
     const i = try reader.readByte();
-    values.items[i + frame.offset] = values.pop();
+    values.items[i] = values.pop();
 
     try @call(.always_tail, instructions[try reader.readByte()], .{ code, values, frames });
 }
@@ -153,11 +150,10 @@ fn set(code: *Code, values: *Values, frames: *Frames) Error!void {
 test set {
     const code = .{ opcode("set"), 0, opcode("end") };
     var values = allocate_values(2);
-    var frames = allocate_frames(1);
+    var frames = allocate_frames(0);
 
     values.appendAssumeCapacity(value.box({}));
     values.appendAssumeCapacity(value.box(@as([*:0]const u8, "Hello, world!")));
-    frames.appendAssumeCapacity(.{});
     try run(&code, &values, &frames);
     try expectEqual(1, values.items.len);
     try expectEqualStrings("Hello, world!", value.unbox(values.pop()).string);
@@ -210,6 +206,8 @@ fn call(code: *Code, values: *Values, frames: *Frames) Error!void {
     const entry: usize = @bitCast(values.items[offset]);
     frames.appendAssumeCapacity(.{ .offset = offset, .address = try code.getPos() });
     try code.seekTo(entry);
+    values.items = values.items[offset..];
+    values.capacity -= offset;
     try @call(.always_tail, instructions[try reader.readByte()], .{ code, values, frames });
 }
 
@@ -217,9 +215,11 @@ fn ret(code: *Code, values: *Values, frames: *Frames) Error!void {
     // assumes exactly 1 result on values
     const reader = code.reader();
     const frame = frames.pop();
+    const offset = frame.offset;
 
-    values.items[frame.offset] = values.pop();
-    values.items.len = frame.offset + 1;
+    values.items[0] = values.pop();
+    values.items = (values.items.ptr - offset)[0 .. offset + 1];
+    values.capacity += offset;
     try code.seekTo(frame.address);
     try @call(.always_tail, instructions[try reader.readByte()], .{ code, values, frames });
 }
@@ -282,11 +282,10 @@ fn compare(comptime op: math.CompareOperator) Instruction {
 fn compareTester(a: Box, comptime op: []const u8, b: Box) !bool {
     const code = [_]u8{ opcode(op), opcode("end") };
     var values = allocate_values(2);
-    var frames = allocate_frames(1);
+    var frames = allocate_frames(0);
 
     values.appendAssumeCapacity(a);
     values.appendAssumeCapacity(b);
-    frames.appendAssumeCapacity(.{});
     try run(&code, &values, &frames);
     try expectEqual(1, values.items.len);
     return value.truthy(values.pop());
