@@ -35,28 +35,57 @@ const greedy = init: {
 };
 
 const Compiler = struct {
+    enclosing: ?*Compiler,
     tokens: []const Token,
     nodes: []const Node,
     locals: std.ArrayListUnmanaged(u32),
+    upvalues: std.AutoArrayHashMap(u32, i8),
     code: Code,
 
-    pub fn init(allocator: Allocator, tokens: []const Token, nodes: []const Node, locals: []u32) Compiler {
+    pub fn init(
+        enclosing: ?*Compiler,
+        allocator: Allocator,
+        tokens: []const Token,
+        nodes: []const Node,
+        locals: []u32,
+    ) Compiler {
         return .{
+            .enclosing = enclosing,
             .tokens = tokens,
             .nodes = nodes,
             .locals = std.ArrayListUnmanaged(u32).initBuffer(locals),
+            .upvalues = std.AutoArrayHashMap(u32, i8).init(allocator),
             .code = Code.init(allocator),
         };
     }
 
     pub fn deinit(self: *Compiler) void {
+        self.upvalues.deinit();
         self.code.deinit();
     }
 
-    fn getIndex(self: Compiler, name: []const u8) ?usize {
+    fn resolveLocal(self: Compiler, token: u24) ?u8 {
         const tokens = self.tokens;
-        for (self.locals.items, 0..) |token, i|
-            if (mem.eql(u8, tokens[token].src, name)) return i;
+        const name = tokens[token].src;
+        for (self.locals.items, 0..) |t, i|
+            if (mem.eql(u8, tokens[t].src, name)) return @intCast(i);
+        return null;
+    }
+
+    fn addUpvalue(self: *Compiler, token: u24, index: i8) ?u8 {
+        const count: u8 = @intCast(self.upvalues.count());
+        return if (self.upvalues.putNoClobber(token, index)) |_| count else |_| null;
+    }
+
+    fn resolveUpValue(self: *Compiler, token: u24) ?u8 {
+        if (self.enclosing) |enclosing| {
+            if (self.resolveLocal(token)) |i| {
+                const j: i8 = @intCast(i);
+                return self.addUpvalue(token, -j);
+            }
+            if (enclosing.resolveUpValue(token)) |i|
+                return self.addUpvalue(token, @intCast(i));
+        }
         return null;
     }
 
@@ -129,25 +158,34 @@ const Compiler = struct {
                 self.locals.appendAssumeCapacity(self.nodes[node + 1].node);
             },
             .EQUAL => {
-                const name = self.tokens[self.nodes[self.nodes[node + 1].node].head.token].src;
-                if (self.getIndex(name)) |index| {
+                const name = self.nodes[self.nodes[node + 1].node].head.token;
+                if (self.resolveLocal(name)) |index| {
                     effect += try self.compile(self.nodes[node + 2].node);
                     try self.code.append(opcode("set"));
-                    try self.code.append(@truncate(index));
+                    try self.code.append(index);
+                    effect -= 1;
+                } else if (self.resolveUpValue(name)) |index| {
+                    effect += try self.compile(self.nodes[node + 2].node);
+                    try self.code.append(opcode("seu"));
+                    try self.code.append(index);
                     effect -= 1;
                 } else {
-                    std.debug.print("use of undeclared identifier '{s}'.", .{name});
+                    std.debug.print("use of undeclared identifier '{s}'.", .{self.tokens[name].src});
                     return error.UndeclaredIdentifier;
                 }
             },
             .IDENTIFIER => {
-                const name = token.src;
-                if (self.getIndex(name)) |index| {
+                const name = self.nodes[node].head.token;
+                if (self.resolveLocal(name)) |index| {
                     try self.code.append(opcode("get"));
-                    try self.code.append(@truncate(index));
+                    try self.code.append(index);
+                    effect += 1;
+                } else if (self.resolveUpValue(name)) |index| {
+                    try self.code.append(opcode("geu"));
+                    try self.code.append(index);
                     effect += 1;
                 } else {
-                    std.debug.print("use of undeclared identifier '{s}'.", .{name});
+                    std.debug.print("use of undeclared identifier '{s}'.", .{token.src});
                     return error.UndeclaredIdentifier;
                 }
             },
@@ -214,7 +252,7 @@ const Compiler = struct {
             .FUN => {
                 assert(count >= 2);
                 var locals: [std.math.maxInt(u8)]u32 = undefined;
-                var child = Compiler.init(self.code.allocator, self.tokens, self.nodes, &locals);
+                var child = Compiler.init(self, self.code.allocator, self.tokens, self.nodes, &locals);
                 defer child.deinit();
                 for (child.nodes[node + 1 .. node + count]) |name|
                     child.locals.appendAssumeCapacity(name.head.token);
@@ -226,8 +264,13 @@ const Compiler = struct {
                 try self.code.appendSlice(&mem.toBytes(self.code.items.len + 2 * N + 1));
                 effect += 1;
                 // skip over function body
+                const n = child.upvalues.count();
                 try self.code.append(opcode("jmp"));
-                try self.code.appendSlice(&mem.toBytes(child.code.items.len + N));
+                try self.code.appendSlice(&mem.toBytes(child.code.items.len + N + 2 + n));
+                try self.code.append(opcode("env"));
+                try self.code.append(@intCast(n));
+                for (child.upvalues.values()) |val|
+                    try self.code.append(@intCast(val));
                 try self.code.appendSlice(child.code.items);
             },
             .RIGHT_PAREN => {
@@ -267,7 +310,7 @@ test Compiler {
     const expected = .{opcode("box")} ++ one ++ .{opcode("box")} ++ one ++ .{ opcode("add"), opcode("end") };
 
     var locals: [std.math.maxInt(u8)]u32 = undefined;
-    var compiler = Compiler.init(testing.allocator, tokens[0..], nodes[0..], &locals);
+    var compiler = Compiler.init(null, testing.allocator, tokens[0..], nodes[0..], &locals);
     defer compiler.deinit();
     const n = try compiler.compile(5);
     try testing.expectEqual(1, n);
@@ -287,13 +330,13 @@ pub fn execute(allocator: Allocator, source: []const u8) !value.Box {
     std.debug.assert(root + 1 + nodes.items[root].head.count == nodes.items.len);
 
     var locals: [std.math.maxInt(u8)]u32 = undefined;
-    var compiler = Compiler.init(allocator, tokens, nodes.items, &locals);
+    var compiler = Compiler.init(null, allocator, tokens, nodes.items, &locals);
     defer compiler.deinit();
     const n = try compiler.compile(root);
 
     var values = exec.allocate_values(std.math.maxInt(u8));
     var frames = exec.allocate_frames(64);
-    try run(compiler.code.items, &values, &frames);
+    try run(compiler.code.items, &values, &frames, allocator);
 
     std.debug.assert(values.items.len == n);
     return values.pop();
