@@ -46,7 +46,7 @@ test tagFromInt {
     try expectEqual(.function, tagFromInt(0x7FFA000000000000));
 }
 
-const Value = union {
+const Value = union(Tag) {
     number: Box,
     nil: void,
     bool: bool,
@@ -78,7 +78,7 @@ test tag {
 
 pub fn box(x: anytype) Box {
     return switch (@TypeOf(x)) {
-        comptime_float => @as(Box, x),
+        comptime_int, comptime_float => @as(Box, x),
         Box => x,
         void => @bitCast(intFromTag(.nil)),
         bool => @bitCast(intFromTag(.bool) | @intFromBool(x)),

@@ -9,11 +9,7 @@ const parse = @import("parse.zig");
 const Node = parse.Node;
 const exec = @import("execute.zig");
 const opcode = exec.opcode;
-const run = exec.run;
 const value = @import("value.zig");
-comptime {
-    _ = @import("emit.zig");
-}
 
 const Code = std.ArrayList(u8);
 const N = @sizeOf(value.Box);
@@ -35,7 +31,7 @@ const greedy = init: {
 };
 
 const Compiler = struct {
-    enclosing: ?*Compiler,
+    enclosing: ?*Compiler = null,
     tokens: []const Token,
     nodes: []const Node,
     locals: std.ArrayListUnmanaged(u32),
@@ -251,6 +247,7 @@ const Compiler = struct {
             },
             .FUN => {
                 assert(count >= 2);
+                self.locals.appendAssumeCapacity(self.nodes[node + 1].node);
                 var locals: [std.math.maxInt(u8)]u32 = undefined;
                 var child = Compiler.init(self, self.code.allocator, self.tokens, self.nodes, &locals);
                 defer child.deinit();
@@ -258,30 +255,25 @@ const Compiler = struct {
                     child.locals.appendAssumeCapacity(name.head.token);
                 _ = try child.compile(self.nodes[node + count].node);
                 try child.code.append(opcode("ret"));
-                // install function address (past "box value; jmp offset") in parent scope
-                self.locals.appendAssumeCapacity(self.nodes[node + 1].node);
-                try self.code.append(opcode("box"));
-                try self.code.appendSlice(&mem.toBytes(self.code.items.len + 2 * N + 1));
+                // skip over function body and install function address in parent scope
                 effect += 1;
-                // skip over function body
                 const n = child.upvalues.count();
-                try self.code.append(opcode("jmp"));
+                try self.code.append(opcode("fun"));
                 try self.code.appendSlice(&mem.toBytes(child.code.items.len + N + 2 + n));
                 try self.code.append(opcode("env"));
                 try self.code.append(@intCast(n));
                 for (child.upvalues.values()) |val|
-                    try self.code.append(@intCast(val));
+                    try self.code.append(@bitCast(val));
                 try self.code.appendSlice(child.code.items);
             },
             .RIGHT_PAREN => {
-                try self.code.append(opcode("box"));
-                try self.code.appendSlice(&mem.toBytes(value.box({})));
                 const index = node + 1;
                 for (self.nodes[index .. index + count]) |child|
                     effect += try self.compile(child.node);
                 assert(effect == count);
                 try self.code.append(opcode("call"));
                 try self.code.append(@truncate(count));
+                effect -= 1;
             },
             else => unreachable,
         }
@@ -336,7 +328,7 @@ pub fn execute(allocator: Allocator, source: []const u8) !value.Box {
 
     var values = exec.allocate_values(std.math.maxInt(u8));
     var frames = exec.allocate_frames(64);
-    try run(compiler.code.items, &values, &frames, allocator);
+    try exec.run(compiler.code.items, &values, &frames, allocator);
 
     std.debug.assert(values.items.len == n);
     return values.pop();
@@ -357,6 +349,10 @@ test execute {
     try testing.expectEqual(
         1.0,
         try execute(allocator, "fun f(x) { x + 1 }; f(0)"),
+    );
+    try testing.expectEqual(
+        4.0, // FIXME
+        try execute(allocator, "fun f(x) { fun g(y) { x + y }; g; }; f(1)(2)"),
     );
 }
 

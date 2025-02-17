@@ -1,9 +1,8 @@
 const std = @import("std");
-const builtin = @import("builtin");
 const testing = std.testing;
 const math = std.math;
 const mem = std.mem;
-const native_endian = builtin.cpu.arch.endian();
+const native_endian = @import("builtin").cpu.arch.endian();
 const expect = testing.expect;
 const expectEqual = testing.expectEqual;
 const expectEqualStrings = testing.expectEqualStrings;
@@ -66,7 +65,7 @@ fn box(code: *Code, values: *Values, frames: *Frames, upvalues: UpValues) Error!
 }
 
 test box {
-    const code = .{opcode("box")} ++ mem.toBytes(value.box(0.0)) ++ .{opcode("box")} ++ mem.toBytes(math.nan(Box)) ++ .{opcode("end")};
+    const code = .{opcode("box")} ++ mem.toBytes(value.box(0)) ++ .{opcode("box")} ++ mem.toBytes(math.nan(Box)) ++ .{opcode("end")};
     var values = allocate_values(2);
     var frames = allocate_frames(0);
 
@@ -164,6 +163,50 @@ test set {
     try expectEqualStrings("Hello, world!", value.unbox(values.pop()).string);
 }
 
+fn geu(code: *Code, values: *Values, frames: *Frames, upvalues: UpValues) Error!void {
+    const reader = code.reader();
+    const i = try reader.readByte();
+    values.appendAssumeCapacity(upvalues.items[i].*);
+    try @call(.always_tail, instructions[try reader.readByte()], .{ code, values, frames, upvalues });
+}
+
+test geu {
+    var code = std.io.fixedBufferStream(&[_]u8{ opcode("geu"), 0, opcode("end") });
+    var values = allocate_values(1);
+    var frames = allocate_frames(0);
+    var upvalues = UpValues.init(testing.allocator);
+    defer upvalues.deinit();
+    var val = value.box(1);
+
+    try upvalues.append(&val);
+    try instructions[try code.reader().readByte()](&code, &values, &frames, upvalues);
+    try expectEqual(1, values.items.len);
+    try expectEqual(1.0, values.pop());
+}
+
+fn seu(code: *Code, values: *Values, frames: *Frames, upvalues: UpValues) Error!void {
+    const reader = code.reader();
+    const i = try reader.readByte();
+    upvalues.items[i].* = values.pop();
+
+    try @call(.always_tail, instructions[try reader.readByte()], .{ code, values, frames, upvalues });
+}
+
+test seu {
+    var code = std.io.fixedBufferStream(&[_]u8{ opcode("seu"), 0, opcode("end") });
+    var values = allocate_values(1);
+    var frames = allocate_frames(0);
+    var upvalues = UpValues.init(testing.allocator);
+    defer upvalues.deinit();
+    var val = value.box({});
+
+    values.appendAssumeCapacity(value.box(1));
+    try upvalues.append(&val);
+    try instructions[try code.reader().readByte()](&code, &values, &frames, upvalues);
+    try expectEqual(0, values.items.len);
+    try expectEqual(1, upvalues.items[0].*);
+}
+
 fn jmp(code: *Code, values: *Values, frames: *Frames, upvalues: UpValues) Error!void {
     const reader = code.reader();
     const n = try reader.readInt(usize, native_endian) - N;
@@ -204,16 +247,24 @@ fn ebb(code: *Code, values: *Values, frames: *Frames, upvalues: UpValues) Error!
     try @call(.always_tail, instructions[try reader.readByte()], .{ code, values, frames, upvalues });
 }
 
+fn fun(code: *Code, values: *Values, frames: *Frames, upvalues: UpValues) Error!void {
+    const reader = code.reader();
+    const n = try reader.readInt(usize, native_endian) - N;
+    values.appendAssumeCapacity(@bitCast(try code.getPos()));
+    try code.seekBy(@intCast(n));
+    try @call(.always_tail, instructions[try reader.readByte()], .{ code, values, frames, upvalues });
+}
+
 fn env(code: *Code, values: *Values, frames: *Frames, upvalues: UpValues) Error!void {
     const reader = code.reader();
     const n = try reader.readByte();
 
     var new = try UpValues.initCapacity(upvalues.allocator, n);
     for (0..n) |_| {
-        const i: i8 = @intCast(try reader.readByte());
+        const i: i8 = @bitCast(try reader.readByte());
         new.appendAssumeCapacity(if (i < 0) &values.items[@abs(i)] else upvalues.items[@abs(i)]);
     }
-    try @call(.always_tail, instructions[try reader.readByte()], .{ code, values, frames, upvalues });
+    try @call(.always_tail, instructions[try reader.readByte()], .{ code, values, frames, new });
 }
 
 fn call(code: *Code, values: *Values, frames: *Frames, upvalues: UpValues) Error!void {
@@ -371,9 +422,12 @@ const names = std.StaticStringMap(InstructionPointer).initComptime(.{
     .{ "not", &not },
     .{ "get", &get },
     .{ "set", &set },
+    .{ "geu", &geu },
+    .{ "seu", &seu },
     .{ "jmp", &jmp },
     .{ "jif", &jif },
     .{ "ebb", &ebb },
+    .{ "fun", &fun },
     .{ "env", &env },
     .{ "call", &call },
     .{ "ret", &ret },
@@ -389,7 +443,23 @@ const names = std.StaticStringMap(InstructionPointer).initComptime(.{
     .{ "neq", &equal(false) },
 });
 
+fn trace(comptime name: []const u8, comptime op: InstructionPointer) Instruction {
+    return struct {
+        fn wrap(code: *Code, values: *Values, frames: *Frames, upvalues: UpValues) Error!void {
+            std.debug.print("{d:0>3} {s} {any}\n", .{ try code.getPos(), name, values.items });
+            try @call(.always_tail, op, .{ code, values, frames, upvalues });
+        }
+    }.wrap;
+}
+
 const instructions: []const InstructionPointer = names.values();
+// const instructions = blk: {
+//     var res: [names.kvs.len]InstructionPointer = undefined;
+//     for (names.keys(), names.values(), &res) |name, op, *it| {
+//         it.* = &trace(name, op);
+//     }
+//     break :blk res;
+// };
 
 pub fn opcode(comptime name: []const u8) u8 {
     return @truncate(names.getIndex(name) orelse 0);
@@ -397,7 +467,9 @@ pub fn opcode(comptime name: []const u8) u8 {
 
 pub fn run(buffer: []const u8, values: *Values, frames: *Frames, allocator: mem.Allocator) Error!void {
     var code = std.io.fixedBufferStream(buffer);
-    const upvalues = UpValues.init(allocator);
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const upvalues = UpValues.init(arena.allocator());
 
     try instructions[try code.reader().readByte()](&code, values, frames, upvalues);
 }
@@ -417,17 +489,28 @@ pub fn disassemble(code: []const u8, writer: anytype) !void {
             names.getIndex("box").? => {
                 var buf: [N]u8 = undefined;
                 std.debug.assert(N == try reader.read(&buf));
-                try writer.print("{x}", .{@as(Box, @bitCast(buf))});
+                try writer.print("{any}", .{value.unbox(@as(Box, @bitCast(buf)))});
             },
             names.getIndex("get").?,
             names.getIndex("set").?,
+            names.getIndex("geu").?,
+            names.getIndex("seu").?,
             names.getIndex("call").?,
-            names.getIndex("env").?,
             => try writer.print("{d}", .{try reader.readByte()}),
             names.getIndex("jmp").?,
             names.getIndex("jif").?,
             names.getIndex("ebb").?,
+            names.getIndex("fun").?,
             => try writer.print("{d}", .{try reader.readInt(usize, native_endian) - N}),
+            names.getIndex("env").? => {
+                const n = try reader.readByte();
+                try writer.print("[ ", .{});
+                for (0..n) |_| {
+                    const i: i8 = @bitCast(try reader.readByte());
+                    try writer.print("{d} ", .{i});
+                }
+                try writer.print("]", .{});
+            },
             else => {},
         }
     }
