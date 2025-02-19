@@ -259,10 +259,15 @@ fn env(code: *Code, values: *Values, frames: *Frames, upvalues: UpValues) Error!
     const reader = code.reader();
     const n = try reader.readByte();
 
-    var new = try UpValues.initCapacity(upvalues.allocator, n);
+    const allocator = upvalues.allocator;
+    var new = try UpValues.initCapacity(allocator, n);
     for (0..n) |_| {
-        const i: i8 = @bitCast(try reader.readByte());
-        new.appendAssumeCapacity(if (i < 0) &values.items[@abs(i)] else upvalues.items[@abs(i)]);
+        const j: i8 = @bitCast(try reader.readByte());
+        const i = @abs(j);
+        new.appendAssumeCapacity(if (j < 0)
+            @ptrCast((try allocator.dupe(Box, values.items[i .. i + 1])).ptr)
+        else
+            upvalues.items[i]);
     }
     try @call(.always_tail, instructions[try reader.readByte()], .{ code, values, frames, new });
 }

@@ -351,7 +351,7 @@ test execute {
         try execute(allocator, "fun f(x) { x + 1 }; f(0)"),
     );
     try testing.expectEqual(
-        4.0, // FIXME
+        3.0,
         try execute(allocator, "fun f(x) { fun g(y) { x + y }; g; }; f(1)(2)"),
     );
 }
