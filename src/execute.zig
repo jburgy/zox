@@ -264,10 +264,11 @@ fn env(code: *Code, values: *Values, frames: *Frames, upvalues: UpValues) Error!
     for (0..n) |_| {
         const j: i8 = @bitCast(try reader.readByte());
         const i = @abs(j);
-        new.appendAssumeCapacity(if (j < 0)
-            @ptrCast((try allocator.dupe(Box, values.items[i .. i + 1])).ptr)
-        else
-            upvalues.items[i]);
+        new.appendAssumeCapacity(if (j < 0) blk: {
+            const p = try allocator.create(Box);
+            p.* = values.items[i];
+            break :blk p;
+        } else upvalues.items[i]);
     }
     try @call(.always_tail, instructions[try reader.readByte()], .{ code, values, frames, new });
 }
