@@ -2,7 +2,6 @@ const std = @import("std");
 const testing = std.testing;
 const math = std.math;
 const mem = std.mem;
-const native_endian = @import("builtin").cpu.arch.endian();
 const expect = testing.expect;
 const expectEqual = testing.expectEqual;
 const expectEqualStrings = testing.expectEqualStrings;
@@ -209,13 +208,13 @@ test seu {
 
 fn jmp(code: *Code, values: *Values, frames: *Frames, upvalues: UpValues) Error!void {
     const reader = code.reader();
-    const n = try reader.readInt(usize, native_endian) - N;
+    const n = try reader.readInt(i32, .little);
     try code.seekBy(@intCast(n));
     try @call(.always_tail, instructions[try reader.readByte()], .{ code, values, frames, upvalues });
 }
 
 test jmp {
-    const code = .{opcode("jmp")} ++ mem.toBytes(@as(usize, N)) ++ .{opcode("end")};
+    const code = .{opcode("jmp")} ++ mem.toBytes(@as(i32, 0)) ++ .{opcode("end")};
     var values = allocate_values(0);
     var frames = allocate_frames(0);
 
@@ -224,14 +223,14 @@ test jmp {
 
 fn jif(code: *Code, values: *Values, frames: *Frames, upvalues: UpValues) Error!void {
     const reader = code.reader();
-    const n = try reader.readInt(usize, native_endian) - N;
+    const n = try reader.readInt(i32, .little);
     if (!value.truthy(values.pop()))
         try code.seekBy(@intCast(n));
     try @call(.always_tail, instructions[try reader.readByte()], .{ code, values, frames, upvalues });
 }
 
 test jif {
-    const code = .{opcode("jif")} ++ mem.toBytes(@as(usize, N)) ++ .{opcode("end")};
+    const code = .{opcode("jif")} ++ mem.toBytes(@as(i32, 0)) ++ .{opcode("end")};
     var values = allocate_values(1);
     var frames = allocate_frames(0);
 
@@ -240,16 +239,9 @@ test jif {
     try expectEqual(0, values.items.len);
 }
 
-fn ebb(code: *Code, values: *Values, frames: *Frames, upvalues: UpValues) Error!void {
-    const reader = code.reader();
-    const n = try reader.readInt(isize, native_endian) + N;
-    try code.seekBy(-n);
-    try @call(.always_tail, instructions[try reader.readByte()], .{ code, values, frames, upvalues });
-}
-
 fn fun(code: *Code, values: *Values, frames: *Frames, upvalues: UpValues) Error!void {
     const reader = code.reader();
-    const n = try reader.readInt(usize, native_endian) - N;
+    const n = try reader.readInt(i32, .little);
     values.appendAssumeCapacity(@bitCast(try code.getPos()));
     try code.seekBy(@intCast(n));
     try @call(.always_tail, instructions[try reader.readByte()], .{ code, values, frames, upvalues });
@@ -432,7 +424,6 @@ const names = std.StaticStringMap(InstructionPointer).initComptime(.{
     .{ "seu", &seu },
     .{ "jmp", &jmp },
     .{ "jif", &jif },
-    .{ "ebb", &ebb },
     .{ "fun", &fun },
     .{ "env", &env },
     .{ "call", &call },
@@ -505,9 +496,8 @@ pub fn disassemble(code: []const u8, writer: anytype) !void {
             => try writer.print("{d}", .{try reader.readByte()}),
             names.getIndex("jmp").?,
             names.getIndex("jif").?,
-            names.getIndex("ebb").?,
             names.getIndex("fun").?,
-            => try writer.print("{d}", .{try reader.readInt(usize, native_endian) - N}),
+            => try writer.print("{d}", .{try reader.readInt(i32, .little)}),
             names.getIndex("env").? => {
                 const n = try reader.readByte();
                 try writer.print("[ ", .{});

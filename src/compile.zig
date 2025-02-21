@@ -1,4 +1,5 @@
 const std = @import("std");
+const math = std.math;
 const mem = std.mem;
 const Allocator = mem.Allocator;
 const testing = std.testing;
@@ -12,7 +13,7 @@ const opcode = exec.opcode;
 const value = @import("value.zig");
 
 const Code = std.ArrayList(u8);
-const N = @sizeOf(value.Box);
+const N = @sizeOf(i32);
 
 // See https://github.com/ziglang/zig/pull/20074
 const greedy = init: {
@@ -58,6 +59,15 @@ const Compiler = struct {
     pub fn deinit(self: *Compiler) void {
         self.upvalues.deinit();
         self.code.deinit();
+    }
+
+    inline fn comeFrom(self: Compiler, offset: usize) void {
+        mem.writeInt(
+            i32,
+            self.code.items[offset..][0..N],
+            math.cast(i32, self.code.items.len - offset - N).?,
+            .little,
+        );
     }
 
     fn resolveLocal(self: Compiler, token: u24) ?u8 {
@@ -127,7 +137,7 @@ const Compiler = struct {
                 try self.code.append(opcode("pop"));
                 effect -= 1;
                 effect += try self.compile(self.nodes[node + 2].node);
-                self.code.replaceRangeAssumeCapacity(offset, N, &mem.toBytes(self.code.items.len - offset));
+                self.comeFrom(offset);
             },
             .OR => { // if (!a) a else b
                 assert(count == 2);
@@ -140,7 +150,7 @@ const Compiler = struct {
                 try self.code.append(opcode("pop"));
                 effect -= 1;
                 effect += try self.compile(self.nodes[node + 2].node);
-                self.code.replaceRangeAssumeCapacity(offset, N, &mem.toBytes(self.code.items.len - offset));
+                self.comeFrom(offset);
             },
             .VAR => {
                 if (count > 1) {
@@ -198,30 +208,34 @@ const Compiler = struct {
                     const other = self.code.items.len;
                     try self.code.appendNTimes(0xAA, N);
                     effect -= 1;
-                    self.code.replaceRangeAssumeCapacity(offset, N, &mem.toBytes(self.code.items.len - offset));
+                    self.comeFrom(offset);
                     effect += try self.compile(self.nodes[node + 3].node);
-                    self.code.replaceRangeAssumeCapacity(other, N, &mem.toBytes(self.code.items.len - other));
+                    self.comeFrom(other);
                 } else {
-                    self.code.replaceRangeAssumeCapacity(offset, N, &mem.toBytes(self.code.items.len - offset));
+                    self.comeFrom(offset);
                 }
             },
             .WHILE => {
                 assert(count == 2);
-                const start = self.code.items.len;
+                const start = math.cast(i32, self.code.items.len).?;
                 effect += try self.compile(self.nodes[node + 1].node);
                 try self.code.append(opcode("jif"));
                 const offset = self.code.items.len;
                 try self.code.appendNTimes(0xAA, N);
                 effect -= 1;
                 effect += try self.compile(self.nodes[node + 2].node);
-                try self.code.append(opcode("ebb"));
-                try self.code.appendSlice(&mem.toBytes(self.code.items.len - start));
-                self.code.replaceRangeAssumeCapacity(offset, N, &mem.toBytes(self.code.items.len - offset));
+                try self.code.append(opcode("jmp"));
+                try self.code.writer().writeInt(
+                    i32,
+                    start - math.cast(i32, self.code.items.len + N).?,
+                    .little,
+                );
+                self.comeFrom(offset);
             },
             .FOR => {
                 assert(count == 4);
                 effect += try self.compile(self.nodes[node + 1].node);
-                const start = self.code.items.len;
+                const start = math.cast(i32, self.code.items.len).?;
                 effect += try self.compile(self.nodes[node + 2].node);
                 try self.code.append(opcode("jif"));
                 const offset = self.code.items.len;
@@ -231,9 +245,13 @@ const Compiler = struct {
                 const n = try self.compile(self.nodes[node + 4].node);
                 try self.code.appendNTimes(opcode("pop"), @abs(n));
                 effect -= n;
-                try self.code.append(opcode("ebb"));
-                try self.code.appendSlice(&mem.toBytes(self.code.items.len - start));
-                self.code.replaceRangeAssumeCapacity(offset, N, &mem.toBytes(self.code.items.len - offset));
+                try self.code.append(opcode("jmp"));
+                try self.code.writer().writeInt(
+                    i32,
+                    start - math.cast(i32, self.code.items.len + N).?,
+                    .little,
+                );
+                self.comeFrom(offset);
             },
             .RIGHT_BRACE => {
                 const depth = self.locals.items.len;
@@ -259,7 +277,13 @@ const Compiler = struct {
                 effect += 1;
                 const n = child.upvalues.count();
                 try self.code.append(opcode("fun"));
-                try self.code.appendSlice(&mem.toBytes(child.code.items.len + N + 2 + n));
+                try self.code.appendNTimes(0xAA, N);
+                mem.writeInt(
+                    i32,
+                    self.code.items[self.code.items.len - N ..][0..N],
+                    math.cast(i32, child.code.items.len + 2 + n).?,
+                    .little,
+                );
                 try self.code.append(opcode("env"));
                 try self.code.append(@intCast(n));
                 for (child.upvalues.values()) |val|
