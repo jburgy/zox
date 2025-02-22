@@ -14,6 +14,7 @@ const Frame = struct { offset: usize = 0, address: usize = undefined };
 const Frames = std.ArrayListUnmanaged(Frame);
 const UpValues = std.ArrayList(*Box);
 const Code = std.io.FixedBufferStream([]const u8);
+const Reader = Code.Reader;
 const Instruction = @TypeOf(end);
 const InstructionPointer = @TypeOf(&end);
 
@@ -30,19 +31,21 @@ pub fn allocate_frames(n: comptime_int) Frames {
     return Frames.initBuffer(@constCast(&[_]Frame{.{}} ** n));
 }
 
-fn end(code: *Code, values: *Values, frames: *Frames, upvalues: UpValues) Error!void {
+fn end(code: *Reader, values: *Values, frames: *Frames, upvalues: UpValues) Error!void {
     _ = values;
     _ = frames;
     _ = upvalues;
-    if (try code.getPos() != try code.getEndPos()) unreachable;
+    const stream = code.context;
+    if (stream.pos != stream.buffer.len) unreachable;
 }
 
-fn str(code: *Code, values: *Values, frames: *Frames, upvalues: UpValues) Error!void {
-    const s = mem.sliceTo(code.buffer[code.pos..], 0);
+fn str(code: *Reader, values: *Values, frames: *Frames, upvalues: UpValues) Error!void {
+    const stream = code.context;
+    const s = mem.sliceTo(stream.buffer[stream.pos..], 0);
     const n = s.len + 1; // skip past nil sentinel
     values.appendAssumeCapacity(value.box(s));
-    try code.seekBy(@intCast(n));
-    try @call(.always_tail, instructions[try code.reader().readByte()], .{ code, values, frames, upvalues });
+    try stream.seekBy(@intCast(n));
+    try @call(.always_tail, instructions[try code.readByte()], .{ code, values, frames, upvalues });
 }
 
 test str {
@@ -56,11 +59,11 @@ test str {
     try expectEqualStrings(expected, value.unbox(values.pop()).string);
 }
 
-fn box(code: *Code, values: *Values, frames: *Frames, upvalues: UpValues) Error!void {
+fn box(code: *Reader, values: *Values, frames: *Frames, upvalues: UpValues) Error!void {
     var buf: [N]u8 = undefined;
     _ = try code.read(&buf);
     values.appendAssumeCapacity(@bitCast(buf));
-    try @call(.always_tail, instructions[try code.reader().readByte()], .{ code, values, frames, upvalues });
+    try @call(.always_tail, instructions[try code.readByte()], .{ code, values, frames, upvalues });
 }
 
 test box {
@@ -74,9 +77,9 @@ test box {
     try expectEqual(0.0, values.pop());
 }
 
-fn pop(code: *Code, values: *Values, frames: *Frames, upvalues: UpValues) Error!void {
+fn pop(code: *Reader, values: *Values, frames: *Frames, upvalues: UpValues) Error!void {
     _ = values.pop();
-    try @call(.always_tail, instructions[try code.reader().readByte()], .{ code, values, frames, upvalues });
+    try @call(.always_tail, instructions[try code.readByte()], .{ code, values, frames, upvalues });
 }
 
 test pop {
@@ -89,9 +92,9 @@ test pop {
     try expectEqual(0, values.items.len);
 }
 
-fn dup(code: *Code, values: *Values, frames: *Frames, upvalues: UpValues) Error!void {
+fn dup(code: *Reader, values: *Values, frames: *Frames, upvalues: UpValues) Error!void {
     values.appendAssumeCapacity(values.getLast());
-    try @call(.always_tail, instructions[try code.reader().readByte()], .{ code, values, frames, upvalues });
+    try @call(.always_tail, instructions[try code.readByte()], .{ code, values, frames, upvalues });
 }
 
 test dup {
@@ -106,9 +109,9 @@ test dup {
     try expectEqual(1.0, values.pop());
 }
 
-fn not(code: *Code, values: *Values, frames: *Frames, upvalues: UpValues) Error!void {
+fn not(code: *Reader, values: *Values, frames: *Frames, upvalues: UpValues) Error!void {
     values.appendAssumeCapacity(value.box(!value.truthy(values.pop())));
-    try @call(.always_tail, instructions[try code.reader().readByte()], .{ code, values, frames, upvalues });
+    try @call(.always_tail, instructions[try code.readByte()], .{ code, values, frames, upvalues });
 }
 
 test not {
@@ -122,12 +125,11 @@ test not {
     try expect(value.truthy(values.pop()));
 }
 
-fn get(code: *Code, values: *Values, frames: *Frames, upvalues: UpValues) Error!void {
-    const reader = code.reader();
-    const i = try reader.readByte();
+fn get(code: *Reader, values: *Values, frames: *Frames, upvalues: UpValues) Error!void {
+    const i = try code.readByte();
 
     values.appendAssumeCapacity(values.items[i]);
-    try @call(.always_tail, instructions[try reader.readByte()], .{ code, values, frames, upvalues });
+    try @call(.always_tail, instructions[try code.readByte()], .{ code, values, frames, upvalues });
 }
 
 test get {
@@ -142,12 +144,11 @@ test get {
         try expectEqualStrings("Hello, world!", value.unbox(values.pop()).string);
 }
 
-fn set(code: *Code, values: *Values, frames: *Frames, upvalues: UpValues) Error!void {
-    const reader = code.reader();
-    const i = try reader.readByte();
+fn set(code: *Reader, values: *Values, frames: *Frames, upvalues: UpValues) Error!void {
+    const i = try code.readByte();
     values.items[i] = values.pop();
 
-    try @call(.always_tail, instructions[try reader.readByte()], .{ code, values, frames, upvalues });
+    try @call(.always_tail, instructions[try code.readByte()], .{ code, values, frames, upvalues });
 }
 
 test set {
@@ -162,15 +163,15 @@ test set {
     try expectEqualStrings("Hello, world!", value.unbox(values.pop()).string);
 }
 
-fn geu(code: *Code, values: *Values, frames: *Frames, upvalues: UpValues) Error!void {
-    const reader = code.reader();
-    const i = try reader.readByte();
+fn geu(code: *Reader, values: *Values, frames: *Frames, upvalues: UpValues) Error!void {
+    const i = try code.readByte();
     values.appendAssumeCapacity(upvalues.items[i].*);
-    try @call(.always_tail, instructions[try reader.readByte()], .{ code, values, frames, upvalues });
+    try @call(.always_tail, instructions[try code.readByte()], .{ code, values, frames, upvalues });
 }
 
 test geu {
-    var code = std.io.fixedBufferStream(&[_]u8{ opcode("geu"), 0, opcode("end") });
+    var stream = std.io.fixedBufferStream(&[_]u8{ opcode("geu"), 0, opcode("end") });
+    var code = stream.reader();
     var values = allocate_values(1);
     var frames = allocate_frames(0);
     var upvalues = UpValues.init(testing.allocator);
@@ -178,21 +179,21 @@ test geu {
     var val = value.box(1);
 
     try upvalues.append(&val);
-    try instructions[try code.reader().readByte()](&code, &values, &frames, upvalues);
+    try instructions[try code.readByte()](&code, &values, &frames, upvalues);
     try expectEqual(1, values.items.len);
     try expectEqual(1.0, values.pop());
 }
 
-fn seu(code: *Code, values: *Values, frames: *Frames, upvalues: UpValues) Error!void {
-    const reader = code.reader();
-    const i = try reader.readByte();
+fn seu(code: *Reader, values: *Values, frames: *Frames, upvalues: UpValues) Error!void {
+    const i = try code.readByte();
     upvalues.items[i].* = values.pop();
 
-    try @call(.always_tail, instructions[try reader.readByte()], .{ code, values, frames, upvalues });
+    try @call(.always_tail, instructions[try code.readByte()], .{ code, values, frames, upvalues });
 }
 
 test seu {
-    var code = std.io.fixedBufferStream(&[_]u8{ opcode("seu"), 0, opcode("end") });
+    var stream = std.io.fixedBufferStream(&[_]u8{ opcode("seu"), 0, opcode("end") });
+    var code = stream.reader();
     var values = allocate_values(1);
     var frames = allocate_frames(0);
     var upvalues = UpValues.init(testing.allocator);
@@ -201,16 +202,15 @@ test seu {
 
     values.appendAssumeCapacity(value.box(1));
     try upvalues.append(&val);
-    try instructions[try code.reader().readByte()](&code, &values, &frames, upvalues);
+    try instructions[try code.readByte()](&code, &values, &frames, upvalues);
     try expectEqual(0, values.items.len);
     try expectEqual(1, upvalues.items[0].*);
 }
 
-fn jmp(code: *Code, values: *Values, frames: *Frames, upvalues: UpValues) Error!void {
-    const reader = code.reader();
-    const n = try reader.readInt(i32, .little);
-    try code.seekBy(@intCast(n));
-    try @call(.always_tail, instructions[try reader.readByte()], .{ code, values, frames, upvalues });
+fn jmp(code: *Reader, values: *Values, frames: *Frames, upvalues: UpValues) Error!void {
+    const n = try code.readInt(i32, .little);
+    try code.context.seekBy(@intCast(n));
+    try @call(.always_tail, instructions[try code.readByte()], .{ code, values, frames, upvalues });
 }
 
 test jmp {
@@ -221,12 +221,11 @@ test jmp {
     try run(&code, &values, &frames, testing.allocator);
 }
 
-fn jif(code: *Code, values: *Values, frames: *Frames, upvalues: UpValues) Error!void {
-    const reader = code.reader();
-    const n = try reader.readInt(i32, .little);
+fn jif(code: *Reader, values: *Values, frames: *Frames, upvalues: UpValues) Error!void {
+    const n = try code.readInt(i32, .little);
     if (!value.truthy(values.pop()))
-        try code.seekBy(@intCast(n));
-    try @call(.always_tail, instructions[try reader.readByte()], .{ code, values, frames, upvalues });
+        try code.context.seekBy(@intCast(n));
+    try @call(.always_tail, instructions[try code.readByte()], .{ code, values, frames, upvalues });
 }
 
 test jif {
@@ -239,22 +238,21 @@ test jif {
     try expectEqual(0, values.items.len);
 }
 
-fn fun(code: *Code, values: *Values, frames: *Frames, upvalues: UpValues) Error!void {
-    const reader = code.reader();
-    const n = try reader.readInt(i32, .little);
-    values.appendAssumeCapacity(@bitCast(try code.getPos()));
-    try code.seekBy(@intCast(n));
-    try @call(.always_tail, instructions[try reader.readByte()], .{ code, values, frames, upvalues });
+fn fun(code: *Reader, values: *Values, frames: *Frames, upvalues: UpValues) Error!void {
+    const n = try code.readInt(i32, .little);
+    const stream = code.context;
+    values.appendAssumeCapacity(@bitCast(stream.pos));
+    try stream.seekBy(@intCast(n));
+    try @call(.always_tail, instructions[try code.readByte()], .{ code, values, frames, upvalues });
 }
 
-fn env(code: *Code, values: *Values, frames: *Frames, upvalues: UpValues) Error!void {
-    const reader = code.reader();
-    const n = try reader.readByte();
+fn env(code: *Reader, values: *Values, frames: *Frames, upvalues: UpValues) Error!void {
+    const n = try code.readByte();
 
     const allocator = upvalues.allocator;
     var new = try UpValues.initCapacity(allocator, n);
     for (0..n) |_| {
-        const j: i8 = @bitCast(try reader.readByte());
+        const j: i8 = @bitCast(try code.readByte());
         const i = @abs(j);
         new.appendAssumeCapacity(if (j < 0) blk: {
             const p = try allocator.create(Box);
@@ -262,41 +260,39 @@ fn env(code: *Code, values: *Values, frames: *Frames, upvalues: UpValues) Error!
             break :blk p;
         } else upvalues.items[i]);
     }
-    try @call(.always_tail, instructions[try reader.readByte()], .{ code, values, frames, new });
+    try @call(.always_tail, instructions[try code.readByte()], .{ code, values, frames, new });
 }
 
-fn call(code: *Code, values: *Values, frames: *Frames, upvalues: UpValues) Error!void {
-    const reader = code.reader();
-
-    const offset = values.items.len - try reader.readByte();
+fn call(code: *Reader, values: *Values, frames: *Frames, upvalues: UpValues) Error!void {
+    const offset = values.items.len - try code.readByte();
     const entry: usize = @bitCast(values.items[offset]);
-    frames.appendAssumeCapacity(.{ .offset = offset, .address = try code.getPos() });
-    try code.seekTo(entry);
+    const stream = code.context;
+    frames.appendAssumeCapacity(.{ .offset = offset, .address = stream.pos });
+    try stream.seekTo(entry);
     values.items = values.items[offset..];
     values.capacity -= offset;
-    try @call(.always_tail, instructions[try reader.readByte()], .{ code, values, frames, upvalues });
+    try @call(.always_tail, instructions[try code.readByte()], .{ code, values, frames, upvalues });
 }
 
-fn ret(code: *Code, values: *Values, frames: *Frames, upvalues: UpValues) Error!void {
+fn ret(code: *Reader, values: *Values, frames: *Frames, upvalues: UpValues) Error!void {
     // assumes exactly 1 result on values
-    const reader = code.reader();
     const frame = frames.pop();
     const offset = frame.offset;
 
     values.items[0] = values.pop();
     values.items = (values.items.ptr - offset)[0 .. offset + 1];
     values.capacity += offset;
-    try code.seekTo(frame.address);
-    try @call(.always_tail, instructions[try reader.readByte()], .{ code, values, frames, upvalues });
+    try code.context.seekTo(frame.address);
+    try @call(.always_tail, instructions[try code.readByte()], .{ code, values, frames, upvalues });
 }
 
 const Binary = @TypeOf(add);
 
 fn binary(comptime op: Binary) Instruction {
     return struct {
-        fn wrap(code: *Code, values: *Values, frames: *Frames, upvalues: UpValues) Error!void {
+        fn wrap(code: *Reader, values: *Values, frames: *Frames, upvalues: UpValues) Error!void {
             values.appendAssumeCapacity(op(values.pop(), values.pop()));
-            try @call(.always_tail, instructions[try code.reader().readByte()], .{ code, values, frames, upvalues });
+            try @call(.always_tail, instructions[try code.readByte()], .{ code, values, frames, upvalues });
         }
     }.wrap;
 }
@@ -330,7 +326,7 @@ fn div(a: Box, b: Box) Box {
 
 fn compare(comptime op: math.CompareOperator) Instruction {
     return struct {
-        fn wrap(code: *Code, values: *Values, frames: *Frames, upvalues: UpValues) Error!void {
+        fn wrap(code: *Reader, values: *Values, frames: *Frames, upvalues: UpValues) Error!void {
             const b = values.pop();
             const a = values.pop();
             values.appendAssumeCapacity(value.box(switch (value.tag(a)) {
@@ -340,7 +336,7 @@ fn compare(comptime op: math.CompareOperator) Instruction {
                 },
                 else => math.compare(a, op, b),
             }));
-            try @call(.always_tail, instructions[try code.reader().readByte()], .{ code, values, frames, upvalues });
+            try @call(.always_tail, instructions[try code.readByte()], .{ code, values, frames, upvalues });
         }
     }.wrap;
 }
@@ -374,7 +370,7 @@ test compare {
 
 fn equal(ok: bool) Instruction {
     return struct {
-        fn wrap(code: *Code, values: *Values, frames: *Frames, upvalues: UpValues) Error!void {
+        fn wrap(code: *Reader, values: *Values, frames: *Frames, upvalues: UpValues) Error!void {
             const b = values.pop();
             const a = values.pop();
             values.appendAssumeCapacity(value.box(switch (value.tag(a)) {
@@ -384,7 +380,7 @@ fn equal(ok: bool) Instruction {
                 },
                 else => (a == b) == ok,
             }));
-            try @call(.always_tail, instructions[try code.reader().readByte()], .{ code, values, frames, upvalues });
+            try @call(.always_tail, instructions[try code.readByte()], .{ code, values, frames, upvalues });
         }
     }.wrap;
 }
@@ -442,8 +438,8 @@ const names = std.StaticStringMap(InstructionPointer).initComptime(.{
 
 fn trace(comptime name: []const u8, comptime op: InstructionPointer) Instruction {
     return struct {
-        fn wrap(code: *Code, values: *Values, frames: *Frames, upvalues: UpValues) Error!void {
-            std.debug.print("{d:0>3} {s} {any}\n", .{ try code.getPos(), name, values.items });
+        fn wrap(code: *Reader, values: *Values, frames: *Frames, upvalues: UpValues) Error!void {
+            std.debug.print("{d:0>3} {s} {any}\n", .{ code.context.pos, name, values.items });
             try @call(.always_tail, op, .{ code, values, frames, upvalues });
         }
     }.wrap;
@@ -463,19 +459,20 @@ pub fn opcode(comptime name: []const u8) u8 {
 }
 
 pub fn run(buffer: []const u8, values: *Values, frames: *Frames, allocator: mem.Allocator) Error!void {
-    var code = std.io.fixedBufferStream(buffer);
+    var stream = std.io.fixedBufferStream(buffer);
+    var code = stream.reader();
     var arena = std.heap.ArenaAllocator.init(allocator);
     defer arena.deinit();
     const upvalues = UpValues.init(arena.allocator());
 
-    try instructions[try code.reader().readByte()](&code, values, frames, upvalues);
+    try instructions[try code.readByte()](&code, values, frames, upvalues);
 }
 
 pub fn disassemble(code: []const u8, writer: anytype) !void {
     var stream = std.io.fixedBufferStream(code);
     const reader = stream.reader();
     while (true) {
-        const pos = try stream.getPos();
+        const pos = stream.pos;
         const op = reader.readByte() catch |err| switch (err) {
             error.EndOfStream => break,
             else => |e| return e,
