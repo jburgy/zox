@@ -60,18 +60,23 @@ test str {
 }
 
 fn box(code: *Reader, values: *Values, frames: *Frames, upvalues: UpValues) Error!void {
-    var buf: [N]u8 = undefined;
-    _ = try code.read(&buf);
-    values.appendAssumeCapacity(@bitCast(buf));
+    values.appendAssumeCapacity(@bitCast(mem.littleToNative(usize, try code.readInt(usize, .little))));
     try @call(.always_tail, instructions[try code.readByte()], .{ code, values, frames, upvalues });
 }
 
 test box {
-    const code = .{opcode("box")} ++ mem.toBytes(value.box(0)) ++ .{opcode("box")} ++ mem.toBytes(math.nan(Box)) ++ .{opcode("end")};
+    var buffer: [2 * N + 3]u8 = undefined;
+    var stream = std.io.fixedBufferStream(&buffer);
+    var writer = stream.writer();
     var values = allocate_values(2);
     var frames = allocate_frames(0);
 
-    try run(&code, &values, &frames, testing.allocator);
+    try writer.writeByte(opcode("box"));
+    try writer.writeInt(usize, @bitCast(value.box(0)), .little);
+    try writer.writeByte(opcode("box"));
+    try writer.writeInt(usize, @bitCast(math.nan(Box)), .little);
+    try writer.writeByte(opcode("end"));
+    try run(buffer[0..], &values, &frames, testing.allocator);
     try expectEqual(2, values.items.len);
     try expect(math.isNan(values.pop()));
     try expectEqual(0.0, values.pop());
@@ -83,7 +88,7 @@ fn pop(code: *Reader, values: *Values, frames: *Frames, upvalues: UpValues) Erro
 }
 
 test pop {
-    const code = [_]u8{ opcode("pop"), opcode("end") };
+    const code = .{ opcode("pop"), opcode("end") };
     var values = allocate_values(1);
     var frames = allocate_frames(0);
 
@@ -98,7 +103,7 @@ fn dup(code: *Reader, values: *Values, frames: *Frames, upvalues: UpValues) Erro
 }
 
 test dup {
-    const code = [_]u8{ opcode("dup"), opcode("end") };
+    const code = .{ opcode("dup"), opcode("end") };
     var values = allocate_values(2);
     var frames = allocate_frames(0);
 
@@ -115,7 +120,7 @@ fn not(code: *Reader, values: *Values, frames: *Frames, upvalues: UpValues) Erro
 }
 
 test not {
-    const code = [_]u8{ opcode("not"), opcode("end") };
+    const code = .{ opcode("not"), opcode("end") };
     var values = allocate_values(1);
     var frames = allocate_frames(0);
 
@@ -133,15 +138,16 @@ fn get(code: *Reader, values: *Values, frames: *Frames, upvalues: UpValues) Erro
 }
 
 test get {
+    const expected = mem.bytesAsSlice(u8, "Hello, world!");
     const code = .{ opcode("get"), 0, opcode("end") };
     var values = allocate_values(2);
     var frames = allocate_frames(0);
 
-    values.appendAssumeCapacity(value.box(@as([*:0]const u8, "Hello, world!")));
+    values.appendAssumeCapacity(value.box(expected));
     try run(&code, &values, &frames, testing.allocator);
     try expectEqual(2, values.items.len);
     for (0..2) |_|
-        try expectEqualStrings("Hello, world!", value.unbox(values.pop()).string);
+        try expectEqualStrings(expected, value.unbox(values.pop()).string);
 }
 
 fn set(code: *Reader, values: *Values, frames: *Frames, upvalues: UpValues) Error!void {
@@ -152,15 +158,16 @@ fn set(code: *Reader, values: *Values, frames: *Frames, upvalues: UpValues) Erro
 }
 
 test set {
+    const expected = mem.bytesAsSlice(u8, "Hello, world!");
     const code = .{ opcode("set"), 0, opcode("end") };
     var values = allocate_values(2);
     var frames = allocate_frames(0);
 
     values.appendAssumeCapacity(value.box({}));
-    values.appendAssumeCapacity(value.box(@as([*:0]const u8, "Hello, world!")));
+    values.appendAssumeCapacity(value.box(expected));
     try run(&code, &values, &frames, testing.allocator);
     try expectEqual(1, values.items.len);
-    try expectEqualStrings("Hello, world!", value.unbox(values.pop()).string);
+    try expectEqualStrings(expected, value.unbox(values.pop()).string);
 }
 
 fn geu(code: *Reader, values: *Values, frames: *Frames, upvalues: UpValues) Error!void {
@@ -302,7 +309,7 @@ fn add(a: Box, b: Box) Box {
 }
 
 test add {
-    const code = [_]u8{ opcode("add"), opcode("end") };
+    const code = .{ opcode("add"), opcode("end") };
     var values = allocate_values(2);
     var frames = allocate_frames(0);
 
@@ -329,9 +336,9 @@ fn compare(comptime op: math.CompareOperator) Instruction {
         fn wrap(code: *Reader, values: *Values, frames: *Frames, upvalues: UpValues) Error!void {
             const b = values.pop();
             const a = values.pop();
-            values.appendAssumeCapacity(value.box(switch (value.tag(a)) {
-                .string => switch (value.tag(b)) {
-                    .string => mem.order(u8, value.unbox(a).string, value.unbox(b).string).compare(op),
+            values.appendAssumeCapacity(value.box(switch (value.unbox(a)) {
+                .string => |s| switch (value.unbox(b)) {
+                    .string => |t| mem.order(u8, s, t).compare(op),
                     else => false,
                 },
                 else => math.compare(a, op, b),
@@ -342,7 +349,7 @@ fn compare(comptime op: math.CompareOperator) Instruction {
 }
 
 fn compareTester(a: Box, comptime op: []const u8, b: Box) !bool {
-    const code = [_]u8{ opcode(op), opcode("end") };
+    const code = .{ opcode(op), opcode("end") };
     var values = allocate_values(2);
     var frames = allocate_frames(0);
 
@@ -354,8 +361,8 @@ fn compareTester(a: Box, comptime op: []const u8, b: Box) !bool {
 }
 
 test compare {
-    const foo = value.box(@as([*:0]const u8, "foo"));
-    const bar = value.box(@as([*:0]const u8, "bar"));
+    const foo = value.box(mem.bytesAsSlice(u8, "foo"));
+    const bar = value.box(mem.bytesAsSlice(u8, "bar"));
 
     try expect(try compareTester(2.0, "lt", 3.0));
     try expect(try compareTester(2.0, "lte", 3.0));
@@ -373,9 +380,9 @@ fn equal(ok: bool) Instruction {
         fn wrap(code: *Reader, values: *Values, frames: *Frames, upvalues: UpValues) Error!void {
             const b = values.pop();
             const a = values.pop();
-            values.appendAssumeCapacity(value.box(switch (value.tag(a)) {
-                .string => switch (value.tag(b)) {
-                    .string => mem.eql(u8, value.unbox(a).string, value.unbox(b).string) == ok,
+            values.appendAssumeCapacity(value.box(switch (value.unbox(a)) {
+                .string => |s| switch (value.unbox(b)) {
+                    .string => |t| mem.eql(u8, s, t) == ok,
                     else => !ok,
                 },
                 else => (a == b) == ok,
@@ -389,8 +396,8 @@ test equal {
     const nil = value.box({});
     const true_ = value.box(true);
     const false_ = value.box(false);
-    const foo = value.box(@as([*:0]const u8, "foo"));
-    const bar = value.box(@as([*:0]const u8, "bar"));
+    const foo = value.box(mem.bytesAsSlice(u8, "foo"));
+    const bar = value.box(mem.bytesAsSlice(u8, "bar"));
 
     try expect(!try compareTester(true_, "eql", false_));
     try expect(try compareTester(true_, "neq", false_));

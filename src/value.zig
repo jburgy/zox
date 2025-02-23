@@ -1,5 +1,6 @@
 const std = @import("std");
 const math = std.math;
+const mem = std.mem;
 const meta = std.meta;
 const expect = std.testing.expect;
 const expectEqual = std.testing.expectEqual;
@@ -55,11 +56,7 @@ const Value = union(Tag) {
     function: []const u8,
 };
 
-inline fn unsigned(comptime T: type) type {
-    return meta.Int(.unsigned, @bitSizeOf(T));
-}
-
-pub fn tag(x: Box) Tag {
+fn tag(x: Box) Tag {
     return tagFromInt(@bitCast(x));
 }
 
@@ -82,7 +79,6 @@ pub fn box(x: anytype) Box {
         Box => x,
         void => @bitCast(intFromTag(.nil)),
         bool => @bitCast(intFromTag(.bool) | @intFromBool(x)),
-        [*:0]const u8 => @bitCast(intFromTag(.string) | @intFromPtr(x)),
         []const u8 => @bitCast(intFromTag(.string) | @intFromPtr(x.ptr)),
         Value => |v| switch (v) {
             .number => |y| y,
@@ -99,7 +95,7 @@ test box {
     const nil = box({});
     const true_ = box(true);
     const false_ = box(false);
-    const str = box(@as([*:0]const u8, "Hello, world!"));
+    const str = box(mem.bytesAsSlice(u8, "Hello, world!"));
 
     try expect(math.isNan(nil));
     try expect(math.isNan(true_));
@@ -122,8 +118,8 @@ pub fn unbox(x: Box) Value {
 }
 
 test unbox {
-    const expected = "Hello, world";
-    try expectEqualStrings(expected, unbox(box(@as([*:0]const u8, expected))).string);
+    const expected = mem.bytesAsSlice(u8, "Hello, world");
+    try expectEqualStrings(expected, unbox(box(expected)).string);
 }
 
 pub fn truthy(x: Box) bool {

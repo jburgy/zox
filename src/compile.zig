@@ -109,13 +109,13 @@ const Compiler = struct {
             .NUMBER => {
                 const num = try std.fmt.parseFloat(value.Box, token.src);
                 try self.code.append(opcode("box"));
-                try self.code.appendSlice(&mem.toBytes(num));
+                try self.code.writer().writeInt(usize, @bitCast(num), .little);
                 effect += 1;
             },
             .BANG_EQUAL, .EQUAL_EQUAL, .MINUS, .PLUS, .SLASH, .STAR, .LESS, .LESS_EQUAL, .GREATER, .GREATER_EQUAL => {
                 if (count == 1) { // -x ⇒ 0 - x
                     try self.code.append(opcode("box"));
-                    try self.code.appendSlice(&mem.toBytes(value.box(0.0)));
+                    try self.code.writer().writeInt(usize, @bitCast(value.box(0.0)), .little);
                     effect += 1;
                     effect += try self.compile(self.nodes[node + 1].node);
                 } else {
@@ -157,7 +157,7 @@ const Compiler = struct {
                     effect += try self.compile(self.nodes[node + 2].node);
                 } else {
                     try self.code.append(opcode("box"));
-                    try self.code.appendSlice(&mem.toBytes(value.box({})));
+                    try self.code.writer().writeInt(usize, @bitCast(value.box({})), .little);
                     effect += 1;
                 }
                 // https://discord.com/channels/605571803288698900/1333444838691180554
@@ -322,7 +322,7 @@ test Compiler {
         .{ .head = .{ .token = 3, .count = 1 } },
         .{ .node = 2 },
     };
-    const one = mem.toBytes(value.box(1.0));
+    const one = mem.toBytes(mem.nativeToLittle(value.Box, value.box(1.0)));
     const expected = .{opcode("box")} ++ one ++ .{opcode("box")} ++ one ++ .{ opcode("add"), opcode("end") };
 
     var locals: [std.math.maxInt(u8)]u32 = undefined;
