@@ -350,8 +350,10 @@ pub fn execute(allocator: Allocator, source: []const u8) !value.Box {
     defer compiler.deinit();
     const n = try compiler.compile(root);
 
-    var values = exec.allocate_values(std.math.maxInt(u8));
-    var frames = exec.allocate_frames(64);
+    var values = try exec.Values.initCapacity(allocator, std.math.maxInt(u8));
+    defer values.deinit();
+    var frames = try exec.Frames.initCapacity(allocator, 64);
+    defer frames.deinit();
     try exec.run(compiler.code.items, &values, &frames, allocator);
 
     std.debug.assert(values.items.len == n);
