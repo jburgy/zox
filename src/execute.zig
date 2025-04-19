@@ -23,14 +23,6 @@ const Error = error{
     OutOfMemory,
 };
 
-pub fn allocate_values(n: comptime_int) Values {
-    return Values.initBuffer(@constCast(&[_]Box{0.0} ** n));
-}
-
-pub fn allocate_frames(n: comptime_int) Frames {
-    return Frames.initBuffer(@constCast(&[_]Frame{.{}} ** n));
-}
-
 fn end(code: *Reader, values: *Values, frames: *Frames, upvalues: *UpValues) Error!void {
     _ = values;
     _ = frames;
@@ -55,8 +47,10 @@ fn str(code: *Reader, values: *Values, frames: *Frames, upvalues: *UpValues) Err
 test str {
     const expected = "Hello, World!";
     const code = .{opcode("str")} ++ expected ++ .{ 0, opcode("end") };
-    var values = allocate_values(1);
-    var frames = allocate_frames(0);
+    var values = try Values.initCapacity(testing.allocator, 1);
+    defer values.deinit(testing.allocator);
+    var frames = try Frames.initCapacity(testing.allocator, 0);
+    defer frames.deinit(testing.allocator);
 
     try run(code, &values, &frames, testing.allocator);
     try expectEqual(1, values.items.len);
@@ -72,8 +66,10 @@ test box {
     var buffer: [2 * N + 3]u8 = undefined;
     var stream = std.io.fixedBufferStream(&buffer);
     var writer = stream.writer();
-    var values = allocate_values(2);
-    var frames = allocate_frames(0);
+    var values = try Values.initCapacity(testing.allocator, 2);
+    defer values.deinit(testing.allocator);
+    var frames = try Frames.initCapacity(testing.allocator, 0);
+    defer frames.deinit(testing.allocator);
 
     try writer.writeByte(opcode("box"));
     try writer.writeInt(usize, @bitCast(value.box(0)), .little);
@@ -93,8 +89,10 @@ fn pop(code: *Reader, values: *Values, frames: *Frames, upvalues: *UpValues) Err
 
 test pop {
     const code = .{ opcode("pop"), opcode("end") };
-    var values = allocate_values(1);
-    var frames = allocate_frames(0);
+    var values = try Values.initCapacity(testing.allocator, 1);
+    defer values.deinit(testing.allocator);
+    var frames = try Frames.initCapacity(testing.allocator, 0);
+    defer frames.deinit(testing.allocator);
 
     values.appendAssumeCapacity(value.box(true));
     try run(&code, &values, &frames, testing.allocator);
@@ -108,8 +106,10 @@ fn dup(code: *Reader, values: *Values, frames: *Frames, upvalues: *UpValues) Err
 
 test dup {
     const code = .{ opcode("dup"), opcode("end") };
-    var values = allocate_values(2);
-    var frames = allocate_frames(0);
+    var values = try Values.initCapacity(testing.allocator, 2);
+    defer values.deinit(testing.allocator);
+    var frames = try Frames.initCapacity(testing.allocator, 0);
+    defer frames.deinit(testing.allocator);
 
     values.appendAssumeCapacity(1.0);
     try run(&code, &values, &frames, testing.allocator);
@@ -125,8 +125,10 @@ fn not(code: *Reader, values: *Values, frames: *Frames, upvalues: *UpValues) Err
 
 test not {
     const code = .{ opcode("not"), opcode("end") };
-    var values = allocate_values(1);
-    var frames = allocate_frames(0);
+    var values = try Values.initCapacity(testing.allocator, 1);
+    defer values.deinit(testing.allocator);
+    var frames = try Frames.initCapacity(testing.allocator, 0);
+    defer frames.deinit(testing.allocator);
 
     values.appendAssumeCapacity(value.box(false));
     try run(&code, &values, &frames, testing.allocator);
@@ -144,8 +146,10 @@ fn get(code: *Reader, values: *Values, frames: *Frames, upvalues: *UpValues) Err
 test get {
     const expected = mem.bytesAsSlice(u8, "Hello, world!");
     const code = .{ opcode("get"), 0, opcode("end") };
-    var values = allocate_values(2);
-    var frames = allocate_frames(0);
+    var values = try Values.initCapacity(testing.allocator, 2);
+    defer values.deinit(testing.allocator);
+    var frames = try Frames.initCapacity(testing.allocator, 0);
+    defer frames.deinit(testing.allocator);
 
     values.appendAssumeCapacity(value.box(expected));
     try run(&code, &values, &frames, testing.allocator);
@@ -164,8 +168,10 @@ fn set(code: *Reader, values: *Values, frames: *Frames, upvalues: *UpValues) Err
 test set {
     const expected = mem.bytesAsSlice(u8, "Hello, world!");
     const code = .{ opcode("set"), 0, opcode("end") };
-    var values = allocate_values(2);
-    var frames = allocate_frames(0);
+    var values = try Values.initCapacity(testing.allocator, 2);
+    defer values.deinit(testing.allocator);
+    var frames = try Frames.initCapacity(testing.allocator, 0);
+    defer frames.deinit(testing.allocator);
 
     values.appendAssumeCapacity(value.box({}));
     values.appendAssumeCapacity(value.box(expected));
@@ -183,8 +189,10 @@ fn geu(code: *Reader, values: *Values, frames: *Frames, upvalues: *UpValues) Err
 test geu {
     var stream = std.io.fixedBufferStream(&[_]u8{ opcode("geu"), 0, opcode("end") });
     var code = stream.reader();
-    var values = allocate_values(1);
-    var frames = allocate_frames(0);
+    var values = try Values.initCapacity(testing.allocator, 1);
+    defer values.deinit(testing.allocator);
+    var frames = try Frames.initCapacity(testing.allocator, 0);
+    defer frames.deinit(testing.allocator);
     var upvalues = UpValues.init(testing.allocator);
     defer upvalues.deinit();
     var val = value.box(1);
@@ -205,8 +213,10 @@ fn seu(code: *Reader, values: *Values, frames: *Frames, upvalues: *UpValues) Err
 test seu {
     var stream = std.io.fixedBufferStream(&[_]u8{ opcode("seu"), 0, opcode("end") });
     var code = stream.reader();
-    var values = allocate_values(1);
-    var frames = allocate_frames(0);
+    var values = try Values.initCapacity(testing.allocator, 1);
+    defer values.deinit(testing.allocator);
+    var frames = try Frames.initCapacity(testing.allocator, 0);
+    defer frames.deinit(testing.allocator);
     var upvalues = UpValues.init(testing.allocator);
     defer upvalues.deinit();
     var val = value.box({});
@@ -226,8 +236,10 @@ fn jmp(code: *Reader, values: *Values, frames: *Frames, upvalues: *UpValues) Err
 
 test jmp {
     const code = .{opcode("jmp")} ++ mem.toBytes(@as(i32, 0)) ++ .{opcode("end")};
-    var values = allocate_values(0);
-    var frames = allocate_frames(0);
+    var values = try Values.initCapacity(testing.allocator, 0);
+    defer values.deinit(testing.allocator);
+    var frames = try Frames.initCapacity(testing.allocator, 0);
+    defer frames.deinit(testing.allocator);
 
     try run(&code, &values, &frames, testing.allocator);
 }
@@ -241,8 +253,10 @@ fn jif(code: *Reader, values: *Values, frames: *Frames, upvalues: *UpValues) Err
 
 test jif {
     const code = .{opcode("jif")} ++ mem.toBytes(@as(i32, 0)) ++ .{opcode("end")};
-    var values = allocate_values(1);
-    var frames = allocate_frames(0);
+    var values = try Values.initCapacity(testing.allocator, 1);
+    defer values.deinit(testing.allocator);
+    var frames = try Frames.initCapacity(testing.allocator, 0);
+    defer frames.deinit(testing.allocator);
 
     values.appendAssumeCapacity(value.box(false));
     try run(&code, &values, &frames, testing.allocator);
@@ -316,8 +330,10 @@ fn add(a: Box, b: Box) Box {
 
 test add {
     const code = .{ opcode("add"), opcode("end") };
-    var values = allocate_values(2);
-    var frames = allocate_frames(0);
+    var values = try Values.initCapacity(testing.allocator, 2);
+    defer values.deinit(testing.allocator);
+    var frames = try Frames.initCapacity(testing.allocator, 0);
+    defer frames.deinit(testing.allocator);
 
     for (0..2) |_| values.appendAssumeCapacity(1.0);
     try run(&code, &values, &frames, testing.allocator);
@@ -356,8 +372,10 @@ fn compare(comptime op: math.CompareOperator) Instruction {
 
 fn compareTester(a: Box, comptime op: []const u8, b: Box) !bool {
     const code = .{ opcode(op), opcode("end") };
-    var values = allocate_values(2);
-    var frames = allocate_frames(0);
+    var values = try Values.initCapacity(testing.allocator, 2);
+    defer values.deinit(testing.allocator);
+    var frames = try Frames.initCapacity(testing.allocator, 0);
+    defer frames.deinit(testing.allocator);
 
     values.appendAssumeCapacity(a);
     values.appendAssumeCapacity(b);
