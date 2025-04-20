@@ -9,9 +9,9 @@ const value = @import("value.zig");
 
 const Box = value.Box;
 const N: comptime_int = @sizeOf(Box);
-const Values = std.ArrayListUnmanaged(Box);
+pub const Values = std.ArrayListUnmanaged(Box);
 const Frame = struct { offset: usize = 0, address: usize = undefined };
-const Frames = std.ArrayListUnmanaged(Frame);
+pub const Frames = std.ArrayListUnmanaged(Frame);
 const UpValues = std.ArrayList(*Box);
 const Code = std.io.FixedBufferStream([]const u8);
 const Reader = Code.Reader;

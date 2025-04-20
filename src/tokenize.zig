@@ -117,7 +117,7 @@ const State = enum {
     invalid,
 };
 
-pub fn next(stream: *Stream) Token {
+fn next(stream: *Stream) Token {
     var start = stream.pos;
     var reader = stream.reader();
     var state: State = .start;
