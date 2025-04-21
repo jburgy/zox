@@ -118,13 +118,13 @@ const State = enum {
     invalid,
 };
 
-fn next(stream: *Stream) Token {
+fn next(stream: *Stream) ?Token {
     var start = stream.pos;
     var reader = stream.reader();
     const tag: Token.Tag = tag: {
         state: switch (State.start) {
             .start => switch (reader.readByte() catch 0) {
-                0 => break :tag .EOF,
+                0 => return null,
                 ' ', '\n', '\t', '\r' => {
                     start = stream.pos;
                     continue :state .start;
@@ -187,7 +187,7 @@ fn next(stream: *Stream) Token {
             .comment => {
                 start = stream.pos;
                 switch (reader.readByte() catch 0) {
-                    0 => break :tag .EOF,
+                    0 => return null,
                     '\n' => continue :state .start,
                     else => continue :state .comment,
                 }
@@ -232,12 +232,9 @@ pub fn tokens(allocator: std.mem.Allocator, buffer: []const u8) std.mem.Allocato
     var result = try std.ArrayListUnmanaged(Token).initCapacity(allocator, 4);
     defer result.deinit(allocator);
 
-    while (true) {
-        const token = next(&stream);
+    while (next(&stream)) |token|
         try result.append(allocator, token);
-        if (token.tag == .EOF)
-            break;
-    }
+    try result.append(allocator, .{ .tag = .EOF, .src = buffer[buffer.len..] });
     return result.toOwnedSlice(allocator);
 }
 
