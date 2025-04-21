@@ -308,36 +308,41 @@ test statements {
     const allocator = testing.allocator;
 
     const cases = [_]struct { buffer: []const u8, expected: []const Node }{
-        .{ .buffer = "true", .expected = &.{ head(0, 0), head(1, 0) } },
+        .{ .buffer = "true", .expected = &.{
+            head(0, 0),
+            head(1, 1),
+            ref(0),
+        } },
         .{ .buffer = "a = b", .expected = &.{
             head(0, 0),
             head(2, 0),
-            head(0, 2),
-            ref(3),
+            head(1, 2),
+            ref(0),
             ref(1),
-            ref(4),
+            head(3, 1),
+            ref(2),
         } },
         .{ .buffer = "a + b", .expected = &.{
             head(0, 0),
             head(2, 0),
             head(1, 2),
             ref(0),
-            ref(2),
+            ref(1),
             head(3, 1),
-            ref(4),
+            ref(2),
         } },
         .{ .buffer = "a + b * c", .expected = &.{
             head(0, 0),
             head(2, 0),
             head(4, 0),
             head(3, 2),
+            ref(1),
             ref(2),
-            ref(4),
-            head(2, 2),
+            head(1, 2),
             ref(0),
-            ref(6),
+            ref(3),
             head(5, 1),
-            ref(10),
+            ref(6),
         } },
         .{ .buffer = "var a;", .expected = &.{
             head(0, 1),
@@ -351,7 +356,7 @@ test statements {
             ref(1),
             ref(0),
             head(5, 1),
-            ref(2),
+            ref(1),
         } },
         .{ .buffer = "var a; a = 1", .expected = &.{
             head(0, 1),
@@ -359,11 +364,11 @@ test statements {
             head(3, 0),
             head(5, 0),
             head(4, 2),
+            ref(2),
             ref(3),
-            ref(5),
             head(6, 2),
             ref(0),
-            ref(7),
+            ref(4),
         } },
         .{ .buffer = "var a = 0; a = 1", .expected = &.{
             head(3, 0),
@@ -373,16 +378,16 @@ test statements {
             head(5, 0),
             head(7, 0),
             head(6, 2),
-            ref(6),
-            ref(8),
+            ref(4),
+            ref(5),
             head(8, 2),
-            ref(2),
-            ref(10),
+            ref(1),
+            ref(6),
         } },
     };
     inline for (cases) |case| {
         const actual = try helper(allocator, case.buffer);
         defer allocator.free(actual);
-        try testing.expectEqualStrings(mem.asBytes(case.expected), mem.asBytes(actual));
+        try testing.expectEqualStrings(mem.sliceAsBytes(case.expected), mem.sliceAsBytes(actual));
     }
 }

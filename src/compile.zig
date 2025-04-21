@@ -354,7 +354,7 @@ pub fn execute(allocator: Allocator, source: []const u8) !value.Box {
     try exec.run(compiler.code.items, &values, &frames, allocator);
 
     std.debug.assert(values.items.len == n);
-    return values.pop();
+    return values.pop().?;
 }
 
 test execute {

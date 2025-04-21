@@ -1,4 +1,5 @@
 const std = @import("std");
+const testing = std.testing;
 
 const Stream = std.io.FixedBufferStream([]const u8);
 const Reader = Stream.Reader;
@@ -83,7 +84,7 @@ pub const Token = struct {
         comptime fmt: []const u8,
         options: std.fmt.FormatOptions,
         writer: anytype,
-    ) !bool {
+    ) !void {
         _ = fmt;
         _ = options;
         switch (self.tag) {
@@ -120,114 +121,108 @@ const State = enum {
 fn next(stream: *Stream) Token {
     var start = stream.pos;
     var reader = stream.reader();
-    var state: State = .start;
-    const tag: Token.Tag = blk: while (reader.readByte() catch null) |c| {
-        switch (state) {
-            .start => switch (c) {
-                ' ', '\n', '\t', '\r' => start = stream.pos,
-                '(' => break :blk .LEFT_PAREN,
-                ')' => break :blk .RIGHT_PAREN,
-                '{' => break :blk .LEFT_BRACE,
-                '}' => break :blk .RIGHT_BRACE,
-                ',' => break :blk .COMMA,
-                '.' => break :blk .DOT,
-                '-' => break :blk .MINUS,
-                '+' => break :blk .PLUS,
-                ';' => break :blk .SEMICOLON,
-                '*' => break :blk .STAR,
-                '=' => state = .equal,
-                '!' => state = .bang,
-                '<' => state = .less,
-                '>' => state = .greater,
-                '/' => state = .slash,
-                '"' => state = .string,
-                '0'...'9' => state = .number,
-                'A'...'Z', '_', 'a'...'z' => state = .identifier,
-                else => break :blk .INVALID,
+    const tag: Token.Tag = tag: {
+        state: switch (State.start) {
+            .start => switch (reader.readByte() catch 0) {
+                0 => break :tag .EOF,
+                ' ', '\n', '\t', '\r' => {
+                    start = stream.pos;
+                    continue :state .start;
+                },
+                '(' => break :tag .LEFT_PAREN,
+                ')' => break :tag .RIGHT_PAREN,
+                '{' => break :tag .LEFT_BRACE,
+                '}' => break :tag .RIGHT_BRACE,
+                ',' => break :tag .COMMA,
+                '.' => break :tag .DOT,
+                '-' => break :tag .MINUS,
+                '+' => break :tag .PLUS,
+                ';' => break :tag .SEMICOLON,
+                '*' => break :tag .STAR,
+                '=' => continue :state .equal,
+                '!' => continue :state .bang,
+                '<' => continue :state .less,
+                '>' => continue :state .greater,
+                '/' => continue :state .slash,
+                '"' => continue :state .string,
+                '0'...'9' => continue :state .number,
+                'A'...'Z', '_', 'a'...'z' => continue :state .identifier,
+                else => break :tag .INVALID,
             },
-            .equal => switch (c) {
-                '=' => break :blk .EQUAL_EQUAL,
+            .equal => switch (reader.readByte() catch 0) {
+                '=' => break :tag .EQUAL_EQUAL,
                 else => {
                     stream.pos -= 1;
-                    break :blk .EQUAL;
+                    break :tag .EQUAL;
                 },
             },
-            .bang => switch (c) {
-                '=' => break :blk .BANG_EQUAL,
+            .bang => switch (reader.readByte() catch 0) {
+                '=' => break :tag .BANG_EQUAL,
                 else => {
                     stream.pos -= 1;
-                    break :blk .BANG;
+                    break :tag .BANG;
                 },
             },
-            .less => switch (c) {
-                '=' => break :blk .LESS_EQUAL,
+            .less => switch (reader.readByte() catch 0) {
+                '=' => break :tag .LESS_EQUAL,
                 else => {
                     stream.pos -= 1;
-                    break :blk .LESS;
+                    break :tag .LESS;
                 },
             },
-            .greater => switch (c) {
-                '=' => break :blk .GREATER_EQUAL,
+            .greater => switch (reader.readByte() catch 0) {
+                '=' => break :tag .GREATER_EQUAL,
                 else => {
                     stream.pos -= 1;
-                    break :blk .GREATER;
+                    break :tag .GREATER;
                 },
             },
-            .slash => switch (c) {
-                '/' => state = .comment,
+            .slash => switch (reader.readByte() catch 0) {
+                '/' => continue :state .comment,
                 else => {
                     stream.pos -= 1;
-                    break :blk .SLASH;
+                    break :tag .SLASH;
                 },
             },
             .comment => {
                 start = stream.pos;
-                switch (c) {
-                    '\n' => state = .start,
-                    else => {},
+                switch (reader.readByte() catch 0) {
+                    0 => break :tag .EOF,
+                    '\n' => continue :state .start,
+                    else => continue :state .comment,
                 }
             },
-            .string => switch (c) {
-                '"' => break :blk .STRING,
-                else => {},
+            .string => switch (reader.readByte() catch 0) {
+                0 => break :tag .INVALID,
+                '"' => break :tag .STRING,
+                else => continue :state .string,
             },
-            .number => switch (c) {
-                '0'...'9' => {},
-                '.' => state = .fractional_number,
+            .number => switch (reader.readByte() catch 0) {
+                0 => break :tag .NUMBER,
+                '0'...'9' => continue :state .number,
+                '.' => continue :state .fractional_number,
                 else => {
                     stream.pos -= 1;
-                    break :blk .NUMBER;
+                    break :tag .NUMBER;
                 },
             },
-            .fractional_number => switch (c) {
-                '0'...'9' => {},
+            .fractional_number => switch (reader.readByte() catch 0) {
+                0 => break :tag .NUMBER,
+                '0'...'9' => continue :state .fractional_number,
                 else => {
                     stream.pos -= 1;
-                    break :blk .NUMBER;
+                    break :tag .NUMBER;
                 },
             },
-            .identifier => switch (c) {
-                '0'...'9', 'A'...'Z', '_', 'a'...'z' => {},
-                else => {
-                    stream.pos -= 1;
-                    break :blk Token.maybeReserved(stream.buffer[start..stream.pos]);
+            .identifier => switch (reader.readByte() catch 0) {
+                '0'...'9', 'A'...'Z', '_', 'a'...'z' => continue :state .identifier,
+                else => |c| {
+                    stream.pos -= @min(c, 1);
+                    break :tag Token.maybeReserved(stream.buffer[start..stream.pos]);
                 },
             },
-            else => break :blk .INVALID,
+            else => break :tag .INVALID,
         }
-    } else {
-        break :blk switch (state) {
-            .equal => .EQUAL,
-            .bang => .BANG,
-            .less => .LESS,
-            .greater => .GREATER,
-            .slash => .SLASH,
-            .string => .STRING,
-            .number => .NUMBER,
-            .fractional_number => .NUMBER,
-            .identifier => Token.maybeReserved(stream.buffer[start..stream.pos]),
-            else => .EOF,
-        };
     };
     return .{ .tag = tag, .src = stream.buffer[start..stream.pos] };
 }
@@ -244,4 +239,15 @@ pub fn tokens(allocator: std.mem.Allocator, buffer: []const u8) std.mem.Allocato
             break;
     }
     return result.toOwnedSlice(allocator);
+}
+
+test tokens {
+    const buffer = "a";
+    const actual = try tokens(testing.allocator, buffer);
+    defer testing.allocator.free(actual);
+    const expected = [_]Token{
+        .{ .tag = .IDENTIFIER, .src = buffer },
+        .{ .tag = .EOF, .src = buffer[buffer.len..buffer.len] },
+    };
+    try testing.expectEqualSlices(Token, expected[0..], actual);
 }

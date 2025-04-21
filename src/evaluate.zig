@@ -31,7 +31,7 @@ fn wrap(comptime function: anytype) Value {
     const Function = @TypeOf(function);
     const Args = std.meta.ArgsTuple(Function);
 
-    const function_info = @typeInfo(Function).Fn;
+    const function_info = @typeInfo(Function).@"fn";
     const params = function_info.params;
     const return_info = @typeInfo(function_info.return_type.?);
 
@@ -40,14 +40,14 @@ fn wrap(comptime function: anytype) Value {
             const argt: Args = undefined;
             inline for (params, args, argt) |param, s, *t| {
                 t.* = switch (param.type) {
-                    .Int, .Float => s.number,
+                    .int, .float => s.number,
                     else => unreachable,
                 };
             }
             const result = @call(.auto, function, argt);
             return switch (return_info) {
-                .Int => .{ .number = @floatFromInt(result) },
-                .Float => .{ .number = result },
+                .int => .{ .number = @floatFromInt(result) },
+                .float => .{ .number = result },
                 else => unreachable,
             };
         }
