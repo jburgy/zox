@@ -9,9 +9,9 @@ const value = @import("value.zig");
 
 const Box = value.Box;
 const N: comptime_int = @sizeOf(Box);
-const Values = std.ArrayListUnmanaged(Box);
+pub const Values = std.ArrayListUnmanaged(Box);
 const Frame = struct { offset: usize = 0, address: usize = undefined };
-const Frames = std.ArrayListUnmanaged(Frame);
+pub const Frames = std.ArrayListUnmanaged(Frame);
 const UpValues = std.ArrayList(*Box);
 const Code = std.io.FixedBufferStream([]const u8);
 const Reader = Code.Reader;
@@ -54,7 +54,7 @@ test str {
 
     try run(code, &values, &frames, testing.allocator);
     try expectEqual(1, values.items.len);
-    try expectEqualStrings(expected, value.unbox(values.pop()).string);
+    try expectEqualStrings(expected, value.unbox(values.pop().?).string);
 }
 
 fn box(code: *Reader, values: *Values, frames: *Frames, upvalues: *UpValues) Error!void {
@@ -78,12 +78,12 @@ test box {
     try writer.writeByte(opcode("end"));
     try run(buffer[0..], &values, &frames, testing.allocator);
     try expectEqual(2, values.items.len);
-    try expect(math.isNan(values.pop()));
-    try expectEqual(0.0, values.pop());
+    try expect(math.isNan(values.pop().?));
+    try expectEqual(0.0, values.pop().?);
 }
 
 fn pop(code: *Reader, values: *Values, frames: *Frames, upvalues: *UpValues) Error!void {
-    _ = values.pop();
+    _ = values.pop().?;
     try next(code, values, frames, upvalues);
 }
 
@@ -114,12 +114,12 @@ test dup {
     values.appendAssumeCapacity(1.0);
     try run(&code, &values, &frames, testing.allocator);
     try expectEqual(2, values.items.len);
-    try expectEqual(1.0, values.pop());
-    try expectEqual(1.0, values.pop());
+    try expectEqual(1.0, values.pop().?);
+    try expectEqual(1.0, values.pop().?);
 }
 
 fn not(code: *Reader, values: *Values, frames: *Frames, upvalues: *UpValues) Error!void {
-    values.appendAssumeCapacity(value.box(!value.truthy(values.pop())));
+    values.appendAssumeCapacity(value.box(!value.truthy(values.pop().?)));
     try next(code, values, frames, upvalues);
 }
 
@@ -133,7 +133,7 @@ test not {
     values.appendAssumeCapacity(value.box(false));
     try run(&code, &values, &frames, testing.allocator);
     try expectEqual(1, values.items.len);
-    try expect(value.truthy(values.pop()));
+    try expect(value.truthy(values.pop().?));
 }
 
 fn get(code: *Reader, values: *Values, frames: *Frames, upvalues: *UpValues) Error!void {
@@ -155,12 +155,12 @@ test get {
     try run(&code, &values, &frames, testing.allocator);
     try expectEqual(2, values.items.len);
     for (0..2) |_|
-        try expectEqualStrings(expected, value.unbox(values.pop()).string);
+        try expectEqualStrings(expected, value.unbox(values.pop().?).string);
 }
 
 fn set(code: *Reader, values: *Values, frames: *Frames, upvalues: *UpValues) Error!void {
     const i = try code.readByte();
-    values.items[i] = values.pop();
+    values.items[i] = values.pop().?;
 
     try next(code, values, frames, upvalues);
 }
@@ -177,7 +177,7 @@ test set {
     values.appendAssumeCapacity(value.box(expected));
     try run(&code, &values, &frames, testing.allocator);
     try expectEqual(1, values.items.len);
-    try expectEqualStrings(expected, value.unbox(values.pop()).string);
+    try expectEqualStrings(expected, value.unbox(values.pop().?).string);
 }
 
 fn geu(code: *Reader, values: *Values, frames: *Frames, upvalues: *UpValues) Error!void {
@@ -200,12 +200,12 @@ test geu {
     try upvalues.append(&val);
     try instructions[try code.readByte()](&code, &values, &frames, &upvalues);
     try expectEqual(1, values.items.len);
-    try expectEqual(1.0, values.pop());
+    try expectEqual(1.0, values.pop().?);
 }
 
 fn seu(code: *Reader, values: *Values, frames: *Frames, upvalues: *UpValues) Error!void {
     const i = try code.readByte();
-    upvalues.items[i].* = values.pop();
+    upvalues.items[i].* = values.pop().?;
 
     try next(code, values, frames, upvalues);
 }
@@ -246,7 +246,7 @@ test jmp {
 
 fn jif(code: *Reader, values: *Values, frames: *Frames, upvalues: *UpValues) Error!void {
     const n = try code.readInt(i32, .little);
-    if (!value.truthy(values.pop()))
+    if (!value.truthy(values.pop().?))
         try code.context.seekBy(@intCast(n));
     try next(code, values, frames, upvalues);
 }
@@ -303,10 +303,10 @@ fn call(code: *Reader, values: *Values, frames: *Frames, upvalues: *UpValues) Er
 
 fn ret(code: *Reader, values: *Values, frames: *Frames, upvalues: *UpValues) Error!void {
     // assumes exactly 1 result on values
-    const frame = frames.pop();
+    const frame = frames.pop().?;
     const offset = frame.offset;
 
-    values.items[0] = values.pop();
+    values.items[0] = values.pop().?;
     values.items = (values.items.ptr - offset)[0 .. offset + 1];
     values.capacity += offset;
     try code.context.seekTo(frame.address);
@@ -318,7 +318,7 @@ const Binary = @TypeOf(add);
 fn binary(comptime op: Binary) Instruction {
     return struct {
         fn wrap(code: *Reader, values: *Values, frames: *Frames, upvalues: *UpValues) Error!void {
-            values.appendAssumeCapacity(op(values.pop(), values.pop()));
+            values.appendAssumeCapacity(op(values.pop().?, values.pop().?));
             try next(code, values, frames, upvalues);
         }
     }.wrap;
@@ -338,7 +338,7 @@ test add {
     for (0..2) |_| values.appendAssumeCapacity(1.0);
     try run(&code, &values, &frames, testing.allocator);
     try expectEqual(1, values.items.len);
-    try expectEqual(2.0, values.pop());
+    try expectEqual(2.0, values.pop().?);
 }
 
 fn sub(a: Box, b: Box) Box {
@@ -356,8 +356,8 @@ fn div(a: Box, b: Box) Box {
 fn compare(comptime op: math.CompareOperator) Instruction {
     return struct {
         fn wrap(code: *Reader, values: *Values, frames: *Frames, upvalues: *UpValues) Error!void {
-            const b = values.pop();
-            const a = values.pop();
+            const b = values.pop().?;
+            const a = values.pop().?;
             values.appendAssumeCapacity(value.box(switch (value.unbox(a)) {
                 .string => |s| switch (value.unbox(b)) {
                     .string => |t| mem.order(u8, s, t).compare(op),
@@ -381,7 +381,7 @@ fn compareTester(a: Box, comptime op: []const u8, b: Box) !bool {
     values.appendAssumeCapacity(b);
     try run(&code, &values, &frames, testing.allocator);
     try expectEqual(1, values.items.len);
-    return value.truthy(values.pop());
+    return value.truthy(values.pop().?);
 }
 
 test compare {
@@ -402,8 +402,8 @@ test compare {
 fn equal(ok: bool) Instruction {
     return struct {
         fn wrap(code: *Reader, values: *Values, frames: *Frames, upvalues: *UpValues) Error!void {
-            const b = values.pop();
-            const a = values.pop();
+            const b = values.pop().?;
+            const a = values.pop().?;
             values.appendAssumeCapacity(value.box(switch (value.unbox(a)) {
                 .string => |s| switch (value.unbox(b)) {
                     .string => |t| mem.eql(u8, s, t) == ok,

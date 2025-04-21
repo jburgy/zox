@@ -15,21 +15,18 @@ const value = @import("value.zig");
 const Code = std.ArrayList(u8);
 const N = @sizeOf(i32);
 
-// See https://github.com/ziglang/zig/pull/20074
-const greedy = init: {
-    var temp = std.EnumMap(Token.Tag, u8){};
-    temp.put(.BANG_EQUAL, opcode("neq"));
-    temp.put(.EQUAL_EQUAL, opcode("eql"));
-    temp.put(.MINUS, opcode("sub"));
-    temp.put(.PLUS, opcode("add"));
-    temp.put(.SLASH, opcode("div"));
-    temp.put(.STAR, opcode("mul"));
-    temp.put(.LESS, opcode("lt"));
-    temp.put(.LESS_EQUAL, opcode("lte"));
-    temp.put(.GREATER, opcode("gt"));
-    temp.put(.GREATER_EQUAL, opcode("gte"));
-    break :init temp;
-};
+const greedy = std.EnumMap(Token.Tag, u8).init(.{
+    .BANG_EQUAL = opcode("neq"),
+    .EQUAL_EQUAL = opcode("eql"),
+    .MINUS = opcode("sub"),
+    .PLUS = opcode("add"),
+    .SLASH = opcode("div"),
+    .STAR = opcode("mul"),
+    .LESS = opcode("lt"),
+    .LESS_EQUAL = opcode("lte"),
+    .GREATER = opcode("gt"),
+    .GREATER_EQUAL = opcode("gte"),
+});
 
 const Compiler = struct {
     enclosing: ?*Compiler = null,
@@ -351,13 +348,13 @@ pub fn execute(allocator: Allocator, source: []const u8) !value.Box {
     const n = try compiler.compile(root);
 
     var values = try exec.Values.initCapacity(allocator, std.math.maxInt(u8));
-    defer values.deinit();
+    defer values.deinit(allocator);
     var frames = try exec.Frames.initCapacity(allocator, 64);
-    defer frames.deinit();
+    defer frames.deinit(allocator);
     try exec.run(compiler.code.items, &values, &frames, allocator);
 
     std.debug.assert(values.items.len == n);
-    return values.pop();
+    return values.pop().?;
 }
 
 test execute {
